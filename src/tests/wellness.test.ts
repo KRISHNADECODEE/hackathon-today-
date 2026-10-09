@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { isWithinQuietHours } from '../lib/reminders'
+import { getNextReminderInfo } from '../lib/useDeskReminders'
 import { computeTodayStats, computeWeeklyStats } from '../lib/wellnessStats'
 import { WELLNESS_ROUTINES, routineById } from '../lib/wellnessRoutines'
 import { exerciseById } from '../lib/exercises'
+import { SessionTracker } from '../lib/engine'
 import type { SessionRow } from '../lib/supabase'
+import type { DeskReminderPrefs } from '../lib/prefs'
+import type { Point } from '../lib/geometry'
 
 describe('Quiet Hours Timing', () => {
   it('correctly handles overnight quiet hours (18:00 to 09:00)', () => {
@@ -33,6 +37,48 @@ describe('Quiet Hours Timing', () => {
   })
 })
 
+describe('Next Reminder Calculation & Status', () => {
+  const basePrefs: DeskReminderPrefs = {
+    enabled: true,
+    intervalMinutes: 30,
+    sound: true,
+    quietHoursEnabled: false,
+    quietHoursStart: '18:00',
+    quietHoursEnd: '09:00',
+    pausedUntil: null,
+  }
+
+  it('reports disabled status when master toggle is off', () => {
+    const info = getNextReminderInfo({ ...basePrefs, enabled: false }, Date.now())
+    expect(info.status).toBe('disabled')
+    expect(info.label).toBe('Reminders disabled')
+  })
+
+  it('reports paused status when pausedUntil is in the future', () => {
+    const futureTime = Date.now() + 3600000 // 1 hour ahead
+    const info = getNextReminderInfo({ ...basePrefs, pausedUntil: futureTime }, Date.now())
+    expect(info.status).toBe('paused')
+    expect(info.label).toContain('Paused until')
+  })
+
+  it('reports quiet hours status during quiet window', () => {
+    const evening = new Date('2026-10-09T21:00:00').getTime()
+    const info = getNextReminderInfo(
+      { ...basePrefs, quietHoursEnabled: true, quietHoursStart: '18:00', quietHoursEnd: '09:00' },
+      evening
+    )
+    expect(info.status).toBe('quiet_hours')
+    expect(info.label).toContain('Quiet hours active')
+  })
+
+  it('computes scheduled next reminder countdown accurately', () => {
+    const now = Date.now()
+    const info = getNextReminderInfo(basePrefs, now)
+    expect(info.status).toBe('scheduled')
+    expect(info.label).toMatch(/Next cue in ~\d+ min/)
+  })
+})
+
 describe('Wellness Guided Routines', () => {
   it('contains valid curated routines that map to trackable exercises in EXERCISES', () => {
     expect(WELLNESS_ROUTINES.length).toBeGreaterThanOrEqual(4)
@@ -40,8 +86,10 @@ describe('Wellness Guided Routines', () => {
     for (const routine of WELLNESS_ROUTINES) {
       const ex = exerciseById(routine.exerciseId)
       expect(ex).toBeDefined()
-      expect(ex?.track).toBeDefined() // Must have tracking support
+      expect(ex?.track).toBeDefined()
       expect(routine.durationMinutes).toBeGreaterThan(0)
+      expect(routine.instructions.length).toBeGreaterThan(0)
+      expect(routine.benefits.length).toBeGreaterThan(0)
     }
   })
 
@@ -52,11 +100,18 @@ describe('Wellness Guided Routines', () => {
   })
 })
 
-describe('Daily Goals and Stats Computation', () => {
-  function makeSession(id: string, date: Date, exercise: string, durationMs: number, validReps: number): SessionRow {
+describe('Daily Goals, Active Time and History Computation', () => {
+  function makeSession(
+    id: string,
+    date: Date,
+    exercise: string,
+    durationMs: number,
+    validReps: number,
+    userId = 'user-1'
+  ): SessionRow {
     return {
       id,
-      user_id: 'user-1',
+      user_id: userId,
       exercise,
       exercise_version: 1,
       mode: exercise === 'posture' ? 'monitor' : 'reps',
@@ -78,6 +133,23 @@ describe('Daily Goals and Stats Computation', () => {
       saved_at: date.toISOString(),
     }
   }
+
+  it('handles brand new user empty dashboard with 0 activity honestly', () => {
+    const today = new Date('2026-10-09T12:00:00')
+    const stats = computeTodayStats([], { activeMinutes: 10, breakSessions: 2 }, today)
+    expect(stats.completedSessions).toBe(0)
+    expect(stats.activeMinutes).toBe(0)
+    expect(stats.validReps).toBe(0)
+    expect(stats.minutesGoalProgress).toBe(0)
+    expect(stats.sessionsGoalProgress).toBe(0)
+    expect(stats.goalsMet).toBe(false)
+
+    const weekly = computeWeeklyStats([], today)
+    expect(weekly.days).toHaveLength(7)
+    expect(weekly.totalWeekMinutes).toBe(0)
+    expect(weekly.totalWeekSessions).toBe(0)
+    expect(weekly.currentStreakDays).toBe(0)
+  })
 
   it('computes today stats accurately from real session records', () => {
     const s1 = makeSession('s1', new Date('2026-10-09T10:00:00'), 'sit_to_stand', 120000, 10) // 2 min, 10 reps
@@ -114,15 +186,87 @@ describe('Daily Goals and Stats Computation', () => {
     expect(weekly.currentStreakDays).toBe(3) // 3 consecutive days
   })
 
-  it('handles empty sessions gracefully without error', () => {
+  it('isolates user sessions so private records cannot mix across users', () => {
     const today = new Date('2026-10-09T12:00:00')
-    const weekly = computeWeeklyStats([], today)
+    const user1Sessions = [makeSession('s1', today, 'sit_to_stand', 120000, 10, 'user-1')]
+    const user2Sessions = [makeSession('s2', today, 'biceps_curl', 180000, 12, 'user-2')]
 
-    expect(weekly.days).toHaveLength(7)
-    expect(weekly.totalWeekSessions).toBe(0)
-    expect(weekly.totalWeekMinutes).toBe(0)
-    expect(weekly.activeDaysCount).toBe(0)
-    expect(weekly.currentStreakDays).toBe(0)
-    expect(weekly.mostFrequentExercise).toBeNull()
+    // User 1 sees only user 1's stats
+    const stats1 = computeTodayStats(user1Sessions, { activeMinutes: 10, breakSessions: 2 }, today)
+    expect(stats1.completedSessions).toBe(1)
+    expect(stats1.activeMinutes).toBe(2)
+
+    // User 2 sees only user 2's stats
+    const stats2 = computeTodayStats(user2Sessions, { activeMinutes: 10, breakSessions: 2 }, today)
+    expect(stats2.completedSessions).toBe(1)
+    expect(stats2.activeMinutes).toBe(3)
+  })
+})
+
+describe('Posture Awareness & Exercise Engines', () => {
+  const P = (x: number, y: number, visibility = 0.95): Point => ({ x, y, visibility })
+
+  function makeSidePose({ earY = 0.2, earX = 0.5, shoulderY = 0.35, shoulderX = 0.5 } = {}): Point[] {
+    const lm = Array.from({ length: 33 }, () => P(0.5, 0.5))
+    // S.ear (left or right side depending on orientation, side: right uses index 8, left index 7)
+    lm[7] = P(earX, earY)
+    lm[8] = P(earX, earY)
+    lm[11] = P(shoulderX, shoulderY)
+    lm[12] = P(shoulderX, shoulderY)
+    return lm
+  }
+
+  it('posture exercise starts in monitor mode and tracks cervical alignment honestly', () => {
+    const postureEx = exerciseById('posture')!
+    expect(postureEx).toBeDefined()
+    expect(postureEx.track?.mode).toBe('monitor')
+
+    const tracker = new SessionTracker(postureEx.track!, 'right', postureEx.view)
+    // Upright posture: ear vertically aligned with shoulder (earX = shoulderX)
+    const uprightPose = makeSidePose({ earX: 0.5, earY: 0.2, shoulderX: 0.5, shoulderY: 0.35 })
+
+    let lastFrame
+    for (let i = 0; i < 35; i++) {
+      lastFrame = tracker.update(uprightPose, i * 40, 1)
+    }
+
+    expect(tracker.isCalibrated).toBe(true)
+    expect(lastFrame?.tracking).toBe('ok')
+    expect(lastFrame?.phase).toBe('MONITORING')
+    expect(lastFrame?.value).toBeLessThanOrEqual(5) // Virtually 0 degrees forward tilt
+  })
+
+  it('flags forward-head posture when head drifts forward of shoulder', () => {
+    const postureEx = exerciseById('posture')!
+    const tracker = new SessionTracker(postureEx.track!, 'right', postureEx.view)
+
+    // Calibrate in upright posture
+    for (let i = 0; i < 35; i++) {
+      tracker.update(makeSidePose({ earX: 0.5, earY: 0.2, shoulderX: 0.5, shoulderY: 0.35 }), i * 40, 1)
+    }
+
+    // Slump head forward: ear drifts forward to earX = 0.65 (tilt ~ 45 degrees)
+    const slouchedPose = makeSidePose({ earX: 0.65, earY: 0.2, shoulderX: 0.5, shoulderY: 0.35 })
+    let slouchedFrame
+    for (let i = 0; i < 30; i++) {
+      slouchedFrame = tracker.update(slouchedPose, 1400 + i * 100, 1)
+    }
+
+    expect(slouchedFrame?.value).toBeGreaterThan(25) // High forward-head angle detected
+    expect(slouchedFrame?.warnings.length).toBeGreaterThan(0) // Warning triggered
+  })
+
+  it('preserves existing shoulder abduction and biceps curl exercise definitions', () => {
+    const shoulder = exerciseById('shoulder_abduction')
+    expect(shoulder).toBeDefined()
+    expect(shoulder?.track?.mode).toBe('reps')
+    expect(shoulder?.track?.reps?.direction).toBe('up')
+
+    const biceps = exerciseById('biceps_curl')
+    expect(biceps).toBeDefined()
+    expect(biceps?.track?.mode).toBe('reps')
+    expect(biceps?.track?.reps?.direction).toBe('down')
+    expect(biceps?.track?.reps?.target).toBe(75) // Verified target
+    expect(biceps?.track?.reps?.rest).toBe(130) // Verified rest
   })
 })

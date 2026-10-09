@@ -17,8 +17,8 @@ export function LinkButton({ to, variant = 'primary', children, className = '' }
   return <Link to={to} className={`${base} ${variants[variant]} ${className}`}>{children}</Link>
 }
 
-export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <div className={`rounded-lg border border-rule bg-white ${className}`}>{children}</div>
+export function Card({ children, className = '', onClick }: { children: ReactNode; className?: string; onClick?: () => void }) {
+  return <div onClick={onClick} className={`rounded-lg border border-rule bg-white ${className}`}>{children}</div>
 }
 
 const tones = {

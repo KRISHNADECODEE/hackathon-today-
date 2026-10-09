@@ -33,6 +33,7 @@ export default function WellnessHub() {
   const {
     prefs: reminderPrefs,
     isPaused,
+    nextReminder,
     notifPermission,
     pauseReminders,
     resumeReminders,
@@ -42,6 +43,7 @@ export default function WellnessHub() {
 
   const [dailyGoals, setLocalGoals] = useState<DailyGoals>(() => getPrefs().dailyGoals)
   const [editingGoals, setEditingGoals] = useState(false)
+  const [selectedRoutine, setSelectedRoutine] = useState<WellnessRoutine | null>(null)
 
   function saveGoalMinutes(mins: number) {
     const updated = { ...dailyGoals, activeMinutes: mins }
@@ -239,7 +241,17 @@ export default function WellnessHub() {
                   {reminderPrefs.enabled ? <Bell className="h-4 w-4" /> : <BellOff className="h-4 w-4" />}
                 </div>
                 <div>
-                  <h2 className="font-display text-base font-bold text-ink">Desk-Break Reminders</h2>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="font-display text-base font-bold text-ink">Desk-Break Reminders</h2>
+                    <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-semibold ${
+                      nextReminder.status === 'scheduled' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                      nextReminder.status === 'paused' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+                      nextReminder.status === 'quiet_hours' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' :
+                      'bg-paper text-muted border border-rule'
+                    }`}>
+                      {nextReminder.label}
+                    </span>
+                  </div>
                   <p className="text-xs text-muted">Periodic cues to stretch & stand</p>
                 </div>
               </div>
@@ -371,25 +383,36 @@ export default function WellnessHub() {
 
           {/* Browser Notification Permission Banner */}
           {reminderPrefs.enabled && (
-            <div className="mt-4 border-t border-rule pt-3 flex items-center justify-between text-xs">
-              <span className="text-muted">Desktop alerts:</span>
-              {notifPermission === 'granted' ? (
-                <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
-                  <CheckCircle2 className="h-3.5 w-3.5" /> Allowed
+            <div className="mt-4 border-t border-rule pt-3 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-muted">Desktop alerts:</span>
+                {notifPermission === 'granted' ? (
+                  <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Allowed
+                  </span>
+                ) : notifPermission === 'denied' ? (
+                  <span className="text-rose-600 font-medium" title="Allow notifications in browser site settings">
+                    Blocked in browser
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={requestPermission}
+                    className="font-bold text-teal underline hover:text-teal/80"
+                  >
+                    Enable notifications
+                  </button>
+                )}
+              </div>
+
+              <div className="rounded border border-rule/70 bg-paper p-2 text-[11px] text-muted space-y-0.5">
+                <span className="font-semibold text-ink flex items-center gap-1">
+                  <ShieldCheck className="h-3 w-3 text-teal" /> Browser Limitation Notice
                 </span>
-              ) : notifPermission === 'denied' ? (
-                <span className="text-rose-600 font-medium" title="Allow notifications in browser site settings">
-                  Blocked in browser
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  onClick={requestPermission}
-                  className="font-bold text-teal underline hover:text-teal/80"
-                >
-                  Enable notifications
-                </button>
-              )}
+                <p>
+                  Alerts trigger while KinectIQ remains open in a browser tab. If you close your browser or your device is asleep, cues will resume when you reopen.
+                </p>
+              </div>
             </div>
           )}
         </Card>
@@ -488,7 +511,12 @@ export default function WellnessHub() {
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {WELLNESS_ROUTINES.map((routine) => (
-            <RoutineCard key={routine.id} routine={routine} onStart={() => nav(`/exercise?id=${routine.exerciseId}`)} />
+            <RoutineCard
+              key={routine.id}
+              routine={routine}
+              onStart={() => nav(`/exercise?id=${routine.exerciseId}`)}
+              onPreview={() => setSelectedRoutine(routine)}
+            />
           ))}
         </div>
       </section>
@@ -580,11 +608,184 @@ export default function WellnessHub() {
           )}
         </Card>
       </section>
+
+      {/* Recent Completed Activities Section */}
+      <section className="mb-12">
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <h2 className="font-display text-xl font-bold text-ink">Recent Movement Activity</h2>
+            <p className="text-xs text-muted">Your latest completed desk breaks and posture sessions</p>
+          </div>
+          {sessions.length > 0 && (
+            <Link to="/history" className="text-xs font-semibold text-teal hover:underline flex items-center gap-1">
+              View full activity log <ChevronRight className="h-3.5 w-3.5" />
+            </Link>
+          )}
+        </div>
+
+        {sessions.length === 0 ? (
+          <Card className="p-8 border-dashed border-rule bg-white text-center">
+            <Activity className="mx-auto h-8 w-8 text-muted/60 mb-2" />
+            <h3 className="font-display text-base font-bold text-ink">No Completed Activities Yet</h3>
+            <p className="mt-1 text-xs text-muted max-w-md mx-auto">
+              Start your first 2-minute movement session or posture check above. Your active duration, completed repetitions, and tracking quality will appear here automatically.
+            </p>
+            <div className="mt-4 flex justify-center gap-3">
+              <Button onClick={() => nav('/exercise?id=sit_to_stand')} className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white">
+                <Play className="h-3.5 w-3.5 fill-white" /> Try Sit-to-Stand (2 min)
+              </Button>
+              <Button variant="ghost" onClick={() => nav('/exercise?id=posture')} className="text-xs border border-rule">
+                Check Posture
+              </Button>
+            </div>
+          </Card>
+        ) : (
+          <div className="space-y-3">
+            {sessions.slice(0, 5).map((s) => {
+              const date = new Date(s.started_at)
+              const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+              const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric' })
+              const durationSec = Math.round((s.duration_ms || 0) / 1000)
+              const durationMin = Math.floor(durationSec / 60)
+              const secRem = durationSec % 60
+              const formattedDuration = `${durationMin}m ${secRem}s`
+              const isPosture = s.exercise === 'posture'
+
+              return (
+                <Card
+                  key={s.id}
+                  className="p-4 border-rule bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-emerald-500/50 transition cursor-pointer"
+                  onClick={() => nav(`/sessions/${s.id}`)}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${
+                      isPosture ? 'bg-teal-soft text-teal' : 'bg-emerald-100 text-emerald-800'
+                    }`}>
+                      <Activity className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-display text-sm font-bold text-ink capitalize">
+                          {s.exercise.replace(/_/g, ' ')}
+                        </h4>
+                        <Badge tone={isPosture ? 'teal' : 'neutral'}>
+                          {isPosture ? 'Posture Check' : 'Movement Break'}
+                        </Badge>
+                      </div>
+                      <p className="text-[11px] text-muted mt-0.5">
+                        {dateStr} at {timeStr} · {s.side ? `${s.side} side · ` : ''}Active: <span className="font-mono font-semibold text-ink">{formattedDuration}</span>
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-4 sm:text-right border-t sm:border-t-0 pt-2 sm:pt-0 border-rule/50">
+                    <div>
+                      <span className="text-[10px] text-muted block uppercase font-mono">Performance</span>
+                      <span className="text-xs font-mono font-bold text-ink">
+                        {isPosture ? 'Monitored' : `${s.valid_reps ?? 0} reps`}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-muted block uppercase font-mono">Tracking Quality</span>
+                      <span className="text-xs font-mono font-bold text-emerald-700">
+                        {Math.round((s.tracking_quality ?? 0) * 100)}%
+                      </span>
+                    </div>
+                    <ChevronRight className="h-4 w-4 text-muted hidden sm:block" />
+                  </div>
+                </Card>
+              )
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* Routine Preview / Step-by-Step Instructions Modal */}
+      {selectedRoutine && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="routine-modal-title"
+        >
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl border border-rule animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start justify-between">
+              <div>
+                <span className="text-xs font-mono uppercase tracking-wider text-emerald-600 font-bold">
+                  {selectedRoutine.targetArea} · ~{selectedRoutine.durationMinutes} min
+                </span>
+                <h3 id="routine-modal-title" className="font-display text-xl font-bold text-ink mt-0.5">
+                  {selectedRoutine.title}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedRoutine(null)}
+                className="rounded-full p-1.5 text-muted hover:bg-paper hover:text-ink transition"
+                aria-label="Close dialog"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="mt-2 text-xs text-muted leading-relaxed">
+              {selectedRoutine.description}
+            </p>
+
+            <div className="mt-4 rounded-lg border border-rule/70 bg-paper p-3 text-xs">
+              <strong className="text-ink block mb-1">Target Movement:</strong>
+              <p className="text-muted">{selectedRoutine.recommendedTarget}</p>
+            </div>
+
+            <div className="mt-4">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-ink mb-2">Step-by-Step Instructions</h4>
+              <ol className="list-decimal pl-4 space-y-1.5 text-xs text-muted leading-relaxed">
+                {selectedRoutine.instructions.map((step, idx) => (
+                  <li key={idx}><span className="text-ink font-medium">{step}</span></li>
+                ))}
+              </ol>
+            </div>
+
+            <div className="mt-4">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-ink mb-2">Movement Benefits</h4>
+              <ul className="list-disc pl-4 space-y-1 text-xs text-muted">
+                {selectedRoutine.benefits.map((b, idx) => (
+                  <li key={idx}>{b}</li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="mt-6 flex items-center justify-end gap-3 border-t border-rule pt-4">
+              <Button variant="ghost" onClick={() => setSelectedRoutine(null)} className="text-xs">
+                Cancel
+              </Button>
+              <Button
+                onClick={() => {
+                  const exId = selectedRoutine.exerciseId
+                  setSelectedRoutine(null)
+                  nav(`/exercise?id=${exId}`)
+                }}
+                className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white"
+              >
+                <Play className="h-3.5 w-3.5 fill-white" /> Start Guided Routine
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-function RoutineCard({ routine, onStart }: { routine: WellnessRoutine; onStart: () => void }) {
+function RoutineCard({
+  routine,
+  onStart,
+  onPreview,
+}: {
+  routine: WellnessRoutine
+  onStart: () => void
+  onPreview: () => void
+}) {
   return (
     <Card className="flex flex-col justify-between p-5 border-rule bg-white hover:border-emerald-500 hover:shadow-sm transition">
       <div>
@@ -608,12 +809,13 @@ function RoutineCard({ routine, onStart }: { routine: WellnessRoutine; onStart: 
         >
           <Play className="h-3.5 w-3.5 fill-emerald-700" /> Start 2-Min Break
         </button>
-        <Link
-          to={`/exercises/${routine.exerciseId}`}
+        <button
+          type="button"
+          onClick={onPreview}
           className="text-[11px] text-muted hover:text-ink underline"
         >
-          Details
-        </Link>
+          View Steps
+        </button>
       </div>
     </Card>
   )

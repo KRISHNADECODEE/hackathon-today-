@@ -15,6 +15,32 @@ export type ReminderAlert = {
   intervalMinutes: number
 }
 
+export type NextReminderInfo = {
+  status: 'disabled' | 'paused' | 'quiet_hours' | 'scheduled'
+  label: string
+}
+
+export function getNextReminderInfo(prefs: DeskReminderPrefs, now = Date.now()): NextReminderInfo {
+  if (!prefs.enabled) {
+    return { status: 'disabled', label: 'Reminders disabled' }
+  }
+  if (prefs.pausedUntil && prefs.pausedUntil > now) {
+    const pauseDate = new Date(prefs.pausedUntil)
+    const timeStr = pauseDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    return { status: 'paused', label: `Paused until ${timeStr}` }
+  }
+  if (prefs.quietHoursEnabled && isWithinQuietHours(prefs.quietHoursStart, prefs.quietHoursEnd, new Date(now))) {
+    return { status: 'quiet_hours', label: `Quiet hours active until ${prefs.quietHoursEnd}` }
+  }
+
+  const lastRaw = typeof localStorage !== 'undefined' ? localStorage.getItem(LAST_REMINDER_KEY) : null
+  const lastTime = lastRaw ? parseInt(lastRaw, 10) : now
+  const intervalMs = Math.max(5, prefs.intervalMinutes) * 60 * 1000
+  const nextTarget = lastTime + intervalMs
+  const minsRemaining = Math.max(1, Math.ceil((nextTarget - now) / 60000))
+  return { status: 'scheduled', label: `Next cue in ~${minsRemaining} min` }
+}
+
 export function useDeskReminders() {
   const [prefs, setLocalPrefs] = useState(() => getPrefs().reminder)
   const [activeAlert, setActiveAlert] = useState<ReminderAlert | null>(null)
@@ -149,15 +175,15 @@ export function useDeskReminders() {
     return perm
   }, [])
 
-  const [isPaused, setIsPaused] = useState(false)
-  useEffect(() => {
-    setIsPaused(Boolean(prefs.pausedUntil && prefs.pausedUntil > Date.now()))
-  }, [prefs.pausedUntil])
+  const [mountTime] = useState(() => Date.now())
+  const isPaused = Boolean(prefs.pausedUntil && prefs.pausedUntil > mountTime)
+  const nextReminder = getNextReminderInfo(prefs, mountTime)
 
   return {
     prefs,
     activeAlert,
     isPaused,
+    nextReminder,
     notifPermission,
     dismissAlert,
     snoozeReminder,
