@@ -12,6 +12,7 @@ import { useAuth, useUser } from '../lib/auth'
 import { exerciseById, EXERCISES } from '../lib/exercises'
 import { getPrefs } from '../lib/prefs'
 import { useSessions } from '../lib/useSessions'
+import { PatientConnectionsSection } from '../components/PatientConnectionsSection'
 
 export default function Dashboard() {
   const { user, profile } = useAuth()
@@ -58,6 +59,12 @@ export default function Dashboard() {
           </LinkButton>
         </div>
       </div>
+
+      {user && !isProfessional && (
+        <div className="mb-8">
+          <PatientConnectionsSection patientId={user.id} condensed={true} />
+        </div>
+      )}
 
       {/* Hero Action Cards: Quick Repeat & Category Shortcuts */}
       <div className="grid gap-6 md:grid-cols-[1.2fr_1fr]">

@@ -19,6 +19,7 @@ import { getPrefs, setPrefs, type DeskReminderPrefs, type DailyGoals } from '../
 import { speechAvailable } from '../lib/speech'
 import { supabase } from '../lib/supabase'
 import { requestNotificationPermission } from '../lib/reminders'
+import { PatientConnectionsSection } from '../components/PatientConnectionsSection'
 
 export default function Settings() {
   const { user, profile } = useAuth()
@@ -320,6 +321,16 @@ export default function Settings() {
             </div>
           </Card>
         </section>
+
+        {/* Clinical Care & Practitioner Connections */}
+        {user && (
+          <section>
+            <h2 className="font-display text-xl font-bold text-ink">Clinical Care & Practitioner Connections</h2>
+            <div className="mt-4">
+              <PatientConnectionsSection patientId={user.id} />
+            </div>
+          </section>
+        )}
 
         {/* Account Management */}
         <section>

@@ -27,8 +27,8 @@ const tones = {
   danger: 'bg-[#f8e1df] text-danger',
   neutral: 'bg-paper text-muted border border-rule',
 }
-export function Badge({ tone = 'neutral', children }: { tone?: keyof typeof tones; children: ReactNode }) {
-  return <span className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium ${tones[tone]}`}>{children}</span>
+export function Badge({ tone = 'neutral', className = '', children }: { tone?: keyof typeof tones; className?: string; children: ReactNode }) {
+  return <span className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium ${tones[tone]} ${className}`}>{children}</span>
 }
 
 export const evidenceTone = (e: string) => (e === 'complete' ? 'teal' : e === 'partial' ? 'amber' : 'neutral') as keyof typeof tones
