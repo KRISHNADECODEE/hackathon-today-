@@ -309,6 +309,14 @@ export default function Workspace() {
             </div>
             <p className="font-mono text-xs text-white/50">{VIEW_LABEL[exercise.view]} · Video is processed locally in this browser</p>
           </div>
+          {exercise.id === 'posture' && (
+            <div className="mb-3 rounded-md border border-amber/40 bg-amber-soft/20 px-3 py-2 text-xs text-amber-200 flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber shrink-0 mt-0.5" />
+              <div>
+                <strong>Posture Habit Awareness Aid:</strong> Calculates 2D head-forward angle from webcam landmarks. Not medical-grade posture analysis or a clinical diagnostic device.
+              </div>
+            </div>
+          )}
           {unsaved && (
             <p role="status" className="mb-3 rounded-md border border-amber/60 bg-amber/15 px-3 py-2 text-sm">
               Your last session has not been saved yet. Ending a new session will replace it.{' '}
@@ -364,12 +372,22 @@ export default function Workspace() {
 
           <div className="grid grid-cols-2 gap-4">
             <div className="rounded-lg border border-white/10 bg-slate p-4">
-              <p className="text-sm text-white/60">{trackDef.mode === 'hold' ? 'Valid holds' : 'Valid reps'}</p>
-              <p className="font-mono text-4xl">{frame?.reps ?? 0}</p>
+              <p className="text-sm text-white/60">
+                {trackDef.mode === 'hold' ? 'Valid holds' : trackDef.mode === 'monitor' ? 'Posture alignment' : 'Valid reps'}
+              </p>
+              <p className="font-mono text-2xl font-bold mt-1">
+                {trackDef.mode === 'monitor'
+                  ? angle === null
+                    ? '—'
+                    : angle <= (trackDef.monitor?.goodBelow ?? 20)
+                    ? 'Upright'
+                    : 'Forward'
+                  : frame?.reps ?? 0}
+              </p>
             </div>
             <div className="rounded-lg border border-white/10 bg-slate p-4">
               <p className="text-sm text-white/60">{trackDef.mode === 'hold' ? 'Current hold' : 'Active time'}</p>
-              <p className="font-mono text-4xl">{trackDef.mode === 'hold' ? `${((frame?.holdMs ?? 0) / 1000).toFixed(1)}s` : mmss(activeMs)}</p>
+              <p className="font-mono text-2xl font-bold mt-1">{trackDef.mode === 'hold' ? `${((frame?.holdMs ?? 0) / 1000).toFixed(1)}s` : mmss(activeMs)}</p>
             </div>
           </div>
 

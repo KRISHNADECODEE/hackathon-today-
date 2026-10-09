@@ -1,10 +1,13 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
+  Bell,
+  BellOff,
   Camera,
   CheckCircle,
   LogOut,
   Shield,
+  Sparkles,
   User,
   Volume2,
   VolumeX,
@@ -12,9 +15,10 @@ import {
 import { Button, Card, PageTitle } from '../components/ui'
 import { useAuth } from '../lib/auth'
 import type { Side } from '../lib/engine'
-import { getPrefs, setPrefs } from '../lib/prefs'
+import { getPrefs, setPrefs, type DeskReminderPrefs, type DailyGoals } from '../lib/prefs'
 import { speechAvailable } from '../lib/speech'
 import { supabase } from '../lib/supabase'
+import { requestNotificationPermission } from '../lib/reminders'
 
 export default function Settings() {
   const { user, profile } = useAuth()
@@ -31,6 +35,21 @@ export default function Settings() {
     setLocalPrefs((prev) => ({ ...prev, side }))
   }
 
+  function updateReminder(partial: Partial<DeskReminderPrefs>) {
+    setPrefs({ reminder: partial })
+    setLocalPrefs(getPrefs())
+  }
+
+  function updateDailyGoals(partial: Partial<DailyGoals>) {
+    setPrefs({ dailyGoals: partial })
+    setLocalPrefs(getPrefs())
+  }
+
+  async function handleNotificationRequest() {
+    await requestNotificationPermission()
+    setLocalPrefs(getPrefs())
+  }
+
   async function handleSignOut() {
     await supabase?.auth.signOut()
     nav('/')
@@ -42,7 +61,7 @@ export default function Settings() {
         eyebrow="Preferences & System"
         title="Settings & Guidance"
       >
-        Configure voice cues, customize exercise defaults, review camera setup best practices,
+        Configure voice cues, customize exercise defaults, manage desk-break reminders & movement goals, review camera setup best practices,
         and verify your data privacy controls.
       </PageTitle>
 
@@ -99,6 +118,135 @@ export default function Settings() {
                     {side} side
                   </button>
                 ))}
+              </div>
+            </div>
+
+            {/* Desk-Break Reminders */}
+            <div className="flex flex-col gap-4 p-5">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-ink flex items-center gap-2">
+                    <Bell className="h-4 w-4 text-emerald-600" aria-hidden />
+                    Desk-Break Reminders
+                  </h3>
+                  <p className="mt-1 text-xs text-muted max-w-md">
+                    Periodic nudges to take a 2-minute movement or posture break during long desk sessions.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant={prefs.reminder.enabled ? 'primary' : 'ghost'}
+                    onClick={() => updateReminder({ enabled: !prefs.reminder.enabled })}
+                    className={`text-xs ${prefs.reminder.enabled ? 'bg-emerald-600 hover:bg-emerald-500 border-0' : ''}`}
+                  >
+                    {prefs.reminder.enabled ? <Bell className="h-4 w-4" /> : <BellOff className="h-4 w-4" />}
+                    {prefs.reminder.enabled ? 'Reminders On' : 'Reminders Off'}
+                  </Button>
+                </div>
+              </div>
+
+              {prefs.reminder.enabled && (
+                <div className="grid gap-3 sm:grid-cols-3 rounded-lg border border-rule bg-paper p-3 text-xs">
+                  <div>
+                    <span className="font-semibold text-ink block mb-1">Interval</span>
+                    <div className="flex gap-1">
+                      {[20, 30, 45, 60].map((m) => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => updateReminder({ intervalMinutes: m })}
+                          className={`rounded px-2 py-1 font-mono text-[11px] transition ${
+                            prefs.reminder.intervalMinutes === m
+                              ? 'bg-ink text-white font-bold'
+                              : 'bg-white border border-rule text-muted hover:text-ink'
+                          }`}
+                        >
+                          {m}m
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <span className="font-semibold text-ink block mb-1">Quiet Hours</span>
+                    <label className="flex items-center gap-1.5 text-muted text-[11px] mt-1">
+                      <input
+                        type="checkbox"
+                        checked={prefs.reminder.quietHoursEnabled}
+                        onChange={(e) => updateReminder({ quietHoursEnabled: e.target.checked })}
+                        className="rounded"
+                      />
+                      <span>18:00 – 09:00</span>
+                    </label>
+                  </div>
+
+                  <div>
+                    <span className="font-semibold text-ink block mb-1">Desktop Alerts</span>
+                    <button
+                      type="button"
+                      onClick={handleNotificationRequest}
+                      className="text-teal font-medium underline text-[11px] mt-1 hover:text-teal/80"
+                    >
+                      Request browser permission
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Daily Movement Goals */}
+            <div className="flex flex-wrap items-center justify-between gap-4 p-5">
+              <div>
+                <h3 className="text-sm font-semibold text-ink flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-emerald-600" aria-hidden />
+                  Daily Movement Targets
+                </h3>
+                <p className="mt-1 text-xs text-muted max-w-md">
+                  Set daily goals for active minutes and break session count shown on your Wellness Hub.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-4 text-xs">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-muted">Target Time:</span>
+                  <div className="flex gap-1">
+                    {[5, 10, 15, 20].map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => updateDailyGoals({ activeMinutes: m })}
+                        className={`rounded px-2 py-1 font-mono text-[11px] transition ${
+                          prefs.dailyGoals.activeMinutes === m
+                            ? 'bg-ink text-white font-bold'
+                            : 'bg-paper border border-rule text-muted hover:text-ink'
+                        }`}
+                      >
+                        {m}m
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <span className="text-muted">Breaks:</span>
+                  <div className="flex gap-1">
+                    {[1, 2, 3, 4].map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => updateDailyGoals({ breakSessions: c })}
+                        className={`rounded px-2 py-1 font-mono text-[11px] transition ${
+                          prefs.dailyGoals.breakSessions === c
+                            ? 'bg-ink text-white font-bold'
+                            : 'bg-paper border border-rule text-muted hover:text-ink'
+                        }`}
+                      >
+                        {c}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
           </Card>

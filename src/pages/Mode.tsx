@@ -18,7 +18,7 @@ export default function Mode() {
 
       <div className="grid gap-6 md:grid-cols-3 mt-8">
         {/* Everyday Wellness */}
-        <Link to="/exercise?mode=wellness" className={card}>
+        <Link to="/wellness" className={card}>
           <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white transition">
             <Sparkles className="h-6 w-6" aria-hidden />
           </div>

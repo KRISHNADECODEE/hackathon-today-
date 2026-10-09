@@ -3,6 +3,8 @@ import { BrowserRouter, Link, NavLink, Route, Routes, useNavigate } from 'react-
 import { Activity } from 'lucide-react'
 import { useAuth } from './lib/auth'
 import { supabase } from './lib/supabase'
+import { useDeskReminders } from './lib/useDeskReminders'
+import { ReminderToast } from './components/ReminderToast'
 import Landing from './pages/Landing'
 import Dashboard from './pages/Dashboard'
 import ExerciseLibrary from './pages/ExerciseLibrary'
@@ -15,6 +17,7 @@ import History from './pages/History'
 import SessionDetail from './pages/SessionDetail'
 import Settings from './pages/Settings'
 import Clinician from './pages/Clinician'
+import WellnessHub from './pages/WellnessHub'
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null as Error | null }
@@ -53,20 +56,23 @@ function Header() {
             <>
               <NavLink to="/clinician" className={link}>Clinician Portal</NavLink>
               <NavLink to="/dashboard" className={link}>Overview</NavLink>
+              <NavLink to="/wellness" className={link}>Wellness</NavLink>
               <NavLink to="/exercises" className={link}>Exercise Catalog</NavLink>
               <NavLink to="/exercise" className={link}>Camera Test</NavLink>
               <NavLink to="/history" className={link}>Audit History</NavLink>
             </>
           ) : isWellness ? (
             <>
-              <NavLink to="/dashboard" className={link}>Wellness Hub</NavLink>
-              <NavLink to="/exercise" className={link}>Quick Break</NavLink>
-              <NavLink to="/exercises" className={link}>Routines</NavLink>
-              <NavLink to="/history" className={link}>Streaks & History</NavLink>
+              <NavLink to="/wellness" className={link}>Wellness Hub</NavLink>
+              <NavLink to="/dashboard" className={link}>Overview</NavLink>
+              <NavLink to="/exercise?id=posture" className={link}>Posture Check</NavLink>
+              <NavLink to="/exercises" className={link}>Exercise Library</NavLink>
+              <NavLink to="/history" className={link}>History</NavLink>
             </>
           ) : (
             <>
               <NavLink to="/dashboard" className={link}>Dashboard</NavLink>
+              <NavLink to="/wellness" className={link}>Wellness</NavLink>
               <NavLink to="/exercises" className={link}>Exercises</NavLink>
               <NavLink to="/exercise" className={link}>Live Session</NavLink>
               <NavLink to="/history" className={link}>History</NavLink>
@@ -119,14 +125,18 @@ function Header() {
   )
 }
 
-export default function App() {
+function AppShell() {
+  const { activeAlert, dismissAlert, snoozeReminder } = useDeskReminders()
+
   return (
-    <BrowserRouter>
+    <>
       <Header />
+      <ReminderToast alert={activeAlert} onDismiss={dismissAlert} onSnooze={snoozeReminder} />
       <ErrorBoundary>
         <main>
           <Routes>
             <Route path="/" element={<Landing />} />
+            <Route path="/wellness" element={<WellnessHub />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/exercises" element={<ExerciseLibrary />} />
             <Route path="/exercises/:id" element={<ExerciseDetail />} />
@@ -145,6 +155,14 @@ export default function App() {
       <footer className="mx-auto max-w-6xl px-4 py-10 text-xs text-muted">
         KinectIQ is a prototype rehabilitation and exercise assessment platform. It is not a medical device, does not diagnose clinical conditions, and has not been clinically validated.
       </footer>
+    </>
+  )
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AppShell />
     </BrowserRouter>
   )
 }
