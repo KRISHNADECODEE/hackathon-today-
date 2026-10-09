@@ -41,6 +41,7 @@ export type SessionRow = {
   evidence: 'complete' | 'partial' | 'insufficient'
   summary: Record<string, number | null>
   saved_at: string
+  plan_id?: string | null
 }
 export type RepRow = {
   rep_index: number; peak_rom_deg: number | null; duration_ms: number | null; max_torso_deviation_deg: number | null
@@ -60,6 +61,7 @@ export function toPayload(s: SessionSummary) {
     valid_reps: s.validReps, incomplete_reps: s.incompleteReps,
     peak_rom_deg: num(s.peak), mean_peak_rom_deg: num(s.meanPeak), tracking_quality: num(s.trackingQuality),
     torso_calibrated: s.calibrated, evidence: s.evidence, summary: s.extra,
+    plan_id: s.planId ?? null,
     reps: s.reps.map((r) => ({
       rep_index: r.index, peak_rom_deg: num(r.peak), duration_ms: Math.round(r.durationMs),
       max_torso_deviation_deg: r.maxCheck.trunk_lean ?? null, tracking_quality: r.trackingQuality,

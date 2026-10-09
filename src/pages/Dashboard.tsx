@@ -13,6 +13,7 @@ import { exerciseById, EXERCISES } from '../lib/exercises'
 import { getPrefs } from '../lib/prefs'
 import { useSessions } from '../lib/useSessions'
 import { PatientConnectionsSection } from '../components/PatientConnectionsSection'
+import { ClinicalPlansSection } from '../components/ClinicalPlansSection'
 
 export default function Dashboard() {
   const { user, profile } = useAuth()
@@ -61,8 +62,9 @@ export default function Dashboard() {
       </div>
 
       {user && !isProfessional && (
-        <div className="mb-8">
+        <div className="mb-8 space-y-6">
           <PatientConnectionsSection patientId={user.id} condensed={true} />
+          <ClinicalPlansSection patientId={user.id} />
         </div>
       )}
 

@@ -452,6 +452,7 @@ export type SessionSummary = {
   reps: RepRecord[]
   events: FormEvent[]
   extra: Record<string, number | null>
+  planId?: string | null
 }
 
 export function summarize(

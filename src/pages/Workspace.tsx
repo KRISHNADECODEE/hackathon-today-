@@ -42,6 +42,7 @@ export default function Workspace() {
   const nav = useNavigate()
   const [params] = useSearchParams()
   const exId = params.get('id') ?? getPrefs().lastExercise ?? 'shoulder_abduction'
+  const planId = params.get('planId') ?? null
   const exercise = exerciseById(exId) ?? EXERCISES[0]
 
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -316,13 +317,16 @@ export default function Workspace() {
     const st = s.current
     if (!st.tracker || !st.startedAt) return
     const active = st.activeAcc + (st.run === 'running' ? performance.now() - st.resumedAt : 0)
-    const summary = summarize(
-      st.tracker,
-      { id: st.id, exercise: exercise.id, version: exercise.version, sided: exercise.sided },
-      st.startedAt,
-      new Date(),
-      active
-    )
+    const summary = {
+      ...summarize(
+        st.tracker,
+        { id: st.id, exercise: exercise.id, version: exercise.version, sided: exercise.sided },
+        st.startedAt,
+        new Date(),
+        active
+      ),
+      planId,
+    }
     sessionStorage.setItem(PENDING_KEY, JSON.stringify(summary))
     setRunBoth('idle')
     nav('/complete')
@@ -377,6 +381,15 @@ export default function Workspace() {
               <div>
                 <strong>Posture Habit Awareness Aid:</strong> Calculates 2D head-forward angle from webcam landmarks. Not medical-grade posture analysis or a clinical diagnostic device.
               </div>
+            </div>
+          )}
+          {planId && (
+            <div className="mb-3 rounded-md border border-teal/40 bg-teal-soft/20 px-3 py-2 text-xs text-teal-200 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-teal-300">Prescribed Clinical Exercise</span>
+                <span className="text-white/60">· Movement telemetry is linked to your assigned clinical care plan</span>
+              </div>
+              <span className="font-mono text-[10px] uppercase font-bold tracking-wider text-teal-300 bg-teal/30 px-1.5 py-0.5 rounded">Plan Active</span>
             </div>
           )}
           {unsaved && (

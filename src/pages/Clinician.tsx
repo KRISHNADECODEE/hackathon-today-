@@ -2,8 +2,11 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import {
   AlertTriangle,
   Clock,
+  Edit3,
   FileCheck,
   FolderLock,
+  History,
+  ListChecks,
   Lock,
   Plus,
   ShieldAlert,
@@ -28,6 +31,16 @@ import {
   type ProfessionalCredential,
   type PatientConnection,
 } from '../lib/connections'
+import { EXERCISES, exerciseById } from '../lib/exercises'
+import {
+  createClinicalPlan,
+  getPlanAuditEvents,
+  getPlansForProfessional,
+  updateClinicalPlan,
+  type ClinicalPlan,
+  type PlanAuditEvent,
+  type PlanExerciseItem,
+} from '../lib/clinicalPlans'
 
 export default function Clinician() {
   const { profile } = useAuth()
@@ -78,13 +91,20 @@ function ClinicianPortal({
 }) {
   const [credential, setCredential] = useState<ProfessionalCredential | null>(null)
   const [connections, setConnections] = useState<PatientConnection[]>([])
+  const [plans, setPlans] = useState<ClinicalPlan[]>([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<'roster' | 'pending'>('roster')
+  const [activeTab, setActiveTab] = useState<'roster' | 'plans' | 'pending'>('roster')
 
   // Modals
   const [showCredModal, setShowCredModal] = useState(false)
   const [showConnectModal, setShowConnectModal] = useState(false)
   const [selectedPatient, setSelectedPatient] = useState<PatientConnection | null>(null)
+
+  // Plan Modals & State
+  const [showPlanBuilder, setShowPlanBuilder] = useState(false)
+  const [selectedPatientForPlan, setSelectedPatientForPlan] = useState<PatientConnection | null>(null)
+  const [editingPlan, setEditingPlan] = useState<ClinicalPlan | null>(null)
+  const [viewingAudits, setViewingAudits] = useState<PlanAuditEvent[] | null>(null)
 
   // Credential Form
   const [fullName, setFullName] = useState('')
@@ -102,14 +122,36 @@ function ClinicianPortal({
   const [connectSubmitting, setConnectSubmitting] = useState(false)
   const [connectMsg, setConnectMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
 
+  // Plan Builder Form State
+  const [planTitle, setPlanTitle] = useState('')
+  const [planInstructions, setPlanInstructions] = useState('')
+  const [planFrequency, setPlanFrequency] = useState('Daily')
+  const [planStartDate, setPlanStartDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [planEndDate, setPlanEndDate] = useState(() => {
+    const d = new Date()
+    d.setDate(d.getDate() + 28) // 4 weeks
+    return d.toISOString().split('T')[0]
+  })
+  const [planItems, setPlanItems] = useState<PlanExerciseItem[]>([
+    { exerciseId: 'shoulder_abduction', targetSets: 3, targetReps: 10, targetRomDeg: 120, side: 'right' },
+  ])
+  const [planSubmitting, setPlanSubmitting] = useState(false)
+  const [planMsg, setPlanMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
+
+  // Plan Editor State
+  const [editChangeSummary, setEditChangeSummary] = useState('')
+  const [editStatus, setEditStatus] = useState<'active' | 'completed' | 'paused' | 'archived'>('active')
+
   const loadData = useCallback(async () => {
     setLoading(true)
-    const [cred, conns] = await Promise.all([
+    const [cred, conns, planList] = await Promise.all([
       getProfessionalCredentials(user.id),
       getProfessionalConnections(user.id),
+      getPlansForProfessional(user.id),
     ])
     setCredential(cred)
     setConnections(conns)
+    setPlans(planList)
     setLoading(false)
   }, [user.id])
 
@@ -181,6 +223,104 @@ function ClinicianPortal({
     await loadData()
   }
 
+  function openPlanBuilderForPatient(patient: PatientConnection) {
+    setSelectedPatientForPlan(patient)
+    setPlanTitle(`Rehabilitation Protocol - ${patient.patient_name || 'Patient'}`)
+    setPlanInstructions('')
+    setPlanFrequency('Daily')
+    setPlanStartDate(new Date().toISOString().split('T')[0])
+    const end = new Date()
+    end.setDate(end.getDate() + 28)
+    setPlanEndDate(end.toISOString().split('T')[0])
+    setPlanItems([
+      { exerciseId: 'shoulder_abduction', targetSets: 3, targetReps: 10, targetRomDeg: 120, side: 'right' },
+    ])
+    setPlanMsg(null)
+    setShowPlanBuilder(true)
+  }
+
+  function addPlanExerciseRow() {
+    setPlanItems((prev) => [
+      ...prev,
+      { exerciseId: 'biceps_curl', targetSets: 3, targetReps: 12, side: 'right' },
+    ])
+  }
+
+  function updatePlanExerciseRow(idx: number, patch: Partial<PlanExerciseItem>) {
+    setPlanItems((prev) => prev.map((item, i) => (i === idx ? { ...item, ...patch } : item)))
+  }
+
+  function removePlanExerciseRow(idx: number) {
+    if (planItems.length <= 1) return
+    setPlanItems((prev) => prev.filter((_, i) => i !== idx))
+  }
+
+  async function handleCreatePlanSubmit(e: FormEvent) {
+    e.preventDefault()
+    if (!selectedPatientForPlan) return
+    setPlanSubmitting(true)
+    setPlanMsg(null)
+
+    const res = await createClinicalPlan({
+      professional_id: user.id,
+      patient_id: selectedPatientForPlan.patient_id,
+      connection_id: selectedPatientForPlan.id,
+      title: planTitle,
+      instructions: planInstructions,
+      frequency: planFrequency,
+      start_date: planStartDate,
+      end_date: planEndDate,
+      exercises: planItems,
+      professional_name: credential?.full_name || user.email?.split('@')[0],
+      is_verified_professional: verifiedEffective,
+    })
+
+    setPlanSubmitting(false)
+    if (res.success) {
+      setPlanMsg({ tone: 'ok', text: 'Clinical exercise plan prescribed and assigned to patient.' })
+      await loadData()
+      setTimeout(() => setShowPlanBuilder(false), 1500)
+    } else {
+      setPlanMsg({ tone: 'error', text: res.error || 'Failed to create plan.' })
+    }
+  }
+
+  async function handleEditPlanSubmit(e: FormEvent) {
+    e.preventDefault()
+    if (!editingPlan) return
+    if (!editChangeSummary.trim()) {
+      setPlanMsg({ tone: 'error', text: 'A change summary is required so the patient understands why the plan was modified.' })
+      return
+    }
+
+    setPlanSubmitting(true)
+    setPlanMsg(null)
+
+    const res = await updateClinicalPlan(editingPlan.id, user.id, {
+      title: planTitle,
+      instructions: planInstructions,
+      frequency: planFrequency,
+      end_date: planEndDate,
+      status: editStatus,
+      exercises: planItems,
+      change_summary: editChangeSummary,
+    })
+
+    setPlanSubmitting(false)
+    if (res.success) {
+      setPlanMsg({ tone: 'ok', text: `Plan updated to version ${res.plan?.version}. Patient will be notified of the change summary.` })
+      await loadData()
+      setTimeout(() => setEditingPlan(null), 1500)
+    } else {
+      setPlanMsg({ tone: 'error', text: res.error || 'Failed to update plan.' })
+    }
+  }
+
+  async function openAuditsForPlan(planId: string) {
+    const list = await getPlanAuditEvents(planId)
+    setViewingAudits(list)
+  }
+
   if (loading) {
     return (
       <Card className="p-8 text-center text-xs text-muted">
@@ -238,7 +378,7 @@ function ClinicianPortal({
               <div className="mt-3 text-xs leading-relaxed max-w-2xl">
                 {verifiedEffective ? (
                   <p className="text-teal-900 bg-white/70 rounded-md p-2.5 border border-teal/20">
-                    ✓ <strong>Certified Clinical Access:</strong> Your professional credentials are fully verified. You may review session telemetry and range-of-motion metrics for patients who have explicitly granted active consent.
+                    ✓ <strong>Certified Clinical Access:</strong> Your professional credentials are fully verified. You may review session telemetry, prescribe exercise routines, and audit patient recovery protocols.
                   </p>
                 ) : (
                   <div className="rounded-md bg-white/80 p-3 border border-amber/30 text-amber-900 space-y-1">
@@ -247,7 +387,7 @@ function ClinicianPortal({
                       Patient Data Access Restricted (Preview Sandbox Mode)
                     </p>
                     <p className="text-[11px] text-muted">
-                      Under medical privacy regulations, unverified clinicians cannot view patient movement history, raw ROM metrics, or session details. Self-verification is strictly prohibited by database security triggers.
+                      Under medical privacy regulations, unverified clinicians cannot view patient movement history, raw ROM metrics, or assign exercise plans. Self-verification is strictly prohibited by database security triggers.
                     </p>
                   </div>
                 )}
@@ -279,7 +419,7 @@ function ClinicianPortal({
         </div>
       </Card>
 
-      {/* Patient Management Toolbar */}
+      {/* Navigation Toolbar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-2 border-b sm:border-b-0 border-rule pb-2 sm:pb-0">
           <button
@@ -293,6 +433,18 @@ function ClinicianPortal({
           >
             <Users className="h-3.5 w-3.5" />
             Active Patients ({activePatients.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('plans')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition ${
+              activeTab === 'plans'
+                ? 'bg-ink text-white'
+                : 'text-muted hover:text-ink hover:bg-paper'
+            }`}
+          >
+            <ListChecks className="h-3.5 w-3.5" />
+            Prescribed Plans ({plans.length})
           </button>
           <button
             type="button"
@@ -337,46 +489,182 @@ function ClinicianPortal({
             </Card>
           ) : (
             <div className="grid gap-4">
-              {activePatients.map((pat) => (
-                <Card key={pat.id} className="p-5 border-rule space-y-3">
-                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-sm text-ink">
-                          {pat.patient_name || pat.patient_email || `Patient (${pat.patient_id.slice(0, 8)})`}
-                        </span>
-                        <span className="rounded bg-teal-soft px-1.5 py-0.5 text-[10px] font-semibold text-teal">
-                          Active Connection
-                        </span>
+              {activePatients.map((pat) => {
+                const canAssignPlan = verifiedEffective && pat.consent_scope.allow_plan_assignment
+                const patientPlans = plans.filter((p) => p.patient_id === pat.patient_id)
+
+                return (
+                  <Card key={pat.id} className="p-5 border-rule space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-sm text-ink">
+                            {pat.patient_name || pat.patient_email || `Patient (${pat.patient_id.slice(0, 8)})`}
+                          </span>
+                          <span className="rounded bg-teal-soft px-1.5 py-0.5 text-[10px] font-semibold text-teal">
+                            Active Connection
+                          </span>
+                          {patientPlans.length > 0 && (
+                            <span className="rounded bg-paper px-1.5 py-0.5 text-[10px] font-mono text-muted border border-rule">
+                              {patientPlans.length} {patientPlans.length === 1 ? 'plan' : 'plans'}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted mt-0.5">
+                          Connected: {pat.responded_at ? new Date(pat.responded_at).toLocaleDateString() : 'Active'}
+                        </p>
                       </div>
-                      <p className="text-xs text-muted mt-0.5">
-                        Connected: {pat.responded_at ? new Date(pat.responded_at).toLocaleDateString() : 'Active'}
-                      </p>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          variant={canAssignPlan ? 'primary' : 'ghost'}
+                          onClick={() => {
+                            if (canAssignPlan) openPlanBuilderForPatient(pat)
+                          }}
+                          disabled={!canAssignPlan}
+                          className="text-xs"
+                          title={
+                            !verifiedEffective
+                              ? 'Verification required to assign plans'
+                              : !pat.consent_scope.allow_plan_assignment
+                              ? 'Patient has not granted plan assignment consent'
+                              : 'Prescribe exercise plan'
+                          }
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          {canAssignPlan
+                            ? 'Prescribe Plan'
+                            : !verifiedEffective
+                            ? 'Plan Locked (Unverified)'
+                            : 'Consent Needed'}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          onClick={() => setSelectedPatient(pat)}
+                          className="text-xs"
+                        >
+                          {verifiedEffective ? 'Review Telemetry' : 'Locked (Unverified)'}
+                        </Button>
+                      </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    {/* Consent scope chips */}
+                    <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-rule text-xs">
+                      <span className="text-muted text-[11px] font-semibold">Patient Consent Scope:</span>
+                      <span className="rounded bg-paper px-2 py-0.5 text-[11px] font-mono border border-rule/70">
+                        {pat.consent_scope.share_recent_sessions ? '✓ Recent 30 Days' : '✕ Recent Excluded'}
+                      </span>
+                      <span className="rounded bg-paper px-2 py-0.5 text-[11px] font-mono border border-rule/70">
+                        {pat.consent_scope.share_rom_metrics ? '✓ ROM Metrics' : '✕ ROM Excluded'}
+                      </span>
+                      <span className="rounded bg-paper px-2 py-0.5 text-[11px] font-mono border border-rule/70">
+                        {pat.consent_scope.allow_plan_assignment ? '✓ Plan Assignment Allowed' : '🔒 Plan Assignment Prohibited'}
+                      </span>
+                    </div>
+                  </Card>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tab 2: Prescribed Plans */}
+      {activeTab === 'plans' && (
+        <div className="space-y-4">
+          {plans.length === 0 ? (
+            <Card className="p-10 text-center bg-paper">
+              <ListChecks className="mx-auto h-8 w-8 text-muted mb-3" />
+              <h3 className="font-display text-base font-bold text-ink">No exercise plans prescribed yet</h3>
+              <p className="mt-1 text-xs text-muted max-w-md mx-auto">
+                Create and assign tailored rehabilitation protocols to your active patients. Prescribed routines appear on the patient's recovery dashboard.
+              </p>
+            </Card>
+          ) : (
+            <div className="grid gap-4">
+              {plans.map((plan) => (
+                <Card key={plan.id} className="p-5 border-rule space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-display text-base font-bold text-ink">
+                          {plan.title}
+                        </span>
+                        <span className="rounded bg-paper px-2 py-0.5 text-[11px] font-mono text-muted border border-rule">
+                          v{plan.version}
+                        </span>
+                        <span
+                          className={`rounded px-2 py-0.5 text-[10px] font-semibold capitalize ${
+                            plan.status === 'active'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : plan.status === 'completed'
+                              ? 'bg-teal-100 text-teal-800'
+                              : 'bg-amber-100 text-amber-800'
+                          }`}
+                        >
+                          {plan.status}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted mt-1">
+                        Patient: <strong>{plan.patient_id.slice(0, 8)}…</strong> · Schedule: <strong>{plan.frequency}</strong> ({plan.start_date} to {plan.end_date})
+                      </p>
+                      {plan.instructions && (
+                        <p className="text-xs text-ink/80 mt-1 italic">
+                          "{plan.instructions}"
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
                       <Button
-                        variant={verifiedEffective ? 'primary' : 'ghost'}
-                        onClick={() => setSelectedPatient(pat)}
+                        variant="ghost"
+                        onClick={() => openAuditsForPlan(plan.id)}
                         className="text-xs"
                       >
-                        {verifiedEffective ? 'Review Telemetry' : 'Locked (Unverified)'}
+                        <History className="h-3.5 w-3.5" /> Audit Log
+                      </Button>
+                      <Button
+                        variant="primary"
+                        onClick={() => {
+                          setEditingPlan(plan)
+                          setPlanTitle(plan.title)
+                          setPlanInstructions(plan.instructions || '')
+                          setPlanFrequency(plan.frequency)
+                          setPlanEndDate(plan.end_date)
+                          setEditStatus(plan.status)
+                          setPlanItems([...plan.exercises])
+                          setEditChangeSummary('')
+                          setPlanMsg(null)
+                        }}
+                        className="text-xs"
+                      >
+                        <Edit3 className="h-3.5 w-3.5" /> Edit Plan
                       </Button>
                     </div>
                   </div>
 
-                  {/* Consent scope chips */}
-                  <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-rule text-xs">
-                    <span className="text-muted text-[11px] font-semibold">Patient Consent Scope:</span>
-                    <span className="rounded bg-paper px-2 py-0.5 text-[11px] font-mono border border-rule/70">
-                      {pat.consent_scope.share_recent_sessions ? '✓ Recent 30 Days' : '✕ Recent Excluded'}
-                    </span>
-                    <span className="rounded bg-paper px-2 py-0.5 text-[11px] font-mono border border-rule/70">
-                      {pat.consent_scope.share_rom_metrics ? '✓ ROM Metrics' : '✕ ROM Excluded'}
-                    </span>
-                    <span className="rounded bg-paper px-2 py-0.5 text-[11px] font-mono border border-rule/70">
-                      {pat.consent_scope.share_all_history ? '✓ Entire Archive' : '🔒 History Archive Locked'}
-                    </span>
+                  {/* Exercises in plan */}
+                  <div className="pt-2 border-t border-rule">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted mb-2">
+                      Prescribed Exercises ({plan.exercises.length}):
+                    </p>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {plan.exercises.map((item, idx) => {
+                        const ex = exerciseById(item.exerciseId)
+                        return (
+                          <div key={idx} className="rounded border border-rule/70 bg-paper p-2.5 text-xs">
+                            <div className="font-semibold text-ink flex items-center justify-between">
+                              <span>{ex?.name ?? item.exerciseId}</span>
+                              <span className="text-[10px] text-muted uppercase font-mono">{item.side}</span>
+                            </div>
+                            <div className="text-[11px] text-muted font-mono mt-0.5">
+                              {item.targetSets} sets × {item.targetReps ? `${item.targetReps} reps` : `${item.targetHoldDurationS}s hold`}
+                              {item.targetRomDeg ? ` · ROM: ${item.targetRomDeg}°` : ''}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
                   </div>
                 </Card>
               ))}
@@ -385,7 +673,7 @@ function ClinicianPortal({
         </div>
       )}
 
-      {/* Tab 2: Pending Outgoing Invitations */}
+      {/* Tab 3: Pending Outgoing Invitations */}
       {activeTab === 'pending' && (
         <div className="space-y-4">
           {pendingInvitations.length === 0 ? (
@@ -423,6 +711,551 @@ function ClinicianPortal({
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* MODAL: Plan Builder (Create Plan) */}
+      {showPlanBuilder && selectedPatientForPlan && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
+          <Card className="w-full max-w-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-rule pb-3">
+              <div className="flex items-center gap-2">
+                <ListChecks className="h-5 w-5 text-teal" />
+                <h3 className="font-display text-base font-bold text-ink">
+                  Prescribe Clinical Exercise Plan
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPlanBuilder(false)}
+                className="text-muted hover:text-ink"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-muted">
+              Prescribing care plan for <strong>{selectedPatientForPlan.patient_name || selectedPatientForPlan.patient_id}</strong>.
+              All exercises will be linked to the patient's recovery dashboard with real-time pose tracking targets.
+            </p>
+
+            <form onSubmit={handleCreatePlanSubmit} className="space-y-4 text-xs">
+              <div className="grid sm:grid-cols-2 gap-3">
+                <label className="block text-ink font-medium">
+                  Plan Title *
+                  <input
+                    type="text"
+                    required
+                    value={planTitle}
+                    onChange={(e) => setPlanTitle(e.target.value)}
+                    placeholder="e.g. Post-Op Shoulder Recovery Phase 1"
+                    className="mt-1 w-full rounded border border-rule px-3 py-2 text-xs focus:border-teal focus:outline-none"
+                  />
+                </label>
+
+                <label className="block text-ink font-medium">
+                  Frequency *
+                  <input
+                    type="text"
+                    required
+                    value={planFrequency}
+                    onChange={(e) => setPlanFrequency(e.target.value)}
+                    placeholder="e.g. Daily or 3x per week"
+                    className="mt-1 w-full rounded border border-rule px-3 py-2 text-xs focus:border-teal focus:outline-none"
+                  />
+                </label>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block text-ink font-medium">
+                  Start Date *
+                  <input
+                    type="date"
+                    required
+                    value={planStartDate}
+                    onChange={(e) => setPlanStartDate(e.target.value)}
+                    className="mt-1 w-full rounded border border-rule px-3 py-2 text-xs focus:border-teal focus:outline-none"
+                  />
+                </label>
+
+                <label className="block text-ink font-medium">
+                  End Date *
+                  <input
+                    type="date"
+                    required
+                    value={planEndDate}
+                    onChange={(e) => setPlanEndDate(e.target.value)}
+                    className="mt-1 w-full rounded border border-rule px-3 py-2 text-xs focus:border-teal focus:outline-none"
+                  />
+                </label>
+              </div>
+
+              <label className="block text-ink font-medium">
+                Clinical Instructions & Precautions
+                <textarea
+                  value={planInstructions}
+                  onChange={(e) => setPlanInstructions(e.target.value)}
+                  rows={2}
+                  placeholder="e.g. Perform following gentle heat application. Cease movement if sharp anterior pain occurs."
+                  className="mt-1 w-full rounded border border-rule px-3 py-2 text-xs focus:border-teal focus:outline-none"
+                />
+              </label>
+
+              {/* Prescribed Exercises Editor */}
+              <div className="space-y-3 pt-2 border-t border-rule">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-ink uppercase tracking-wider text-[11px]">
+                    Prescribed Exercise Routines ({planItems.length})
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={addPlanExerciseRow}
+                    className="text-xs text-teal"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> Add Exercise
+                  </Button>
+                </div>
+
+                {planItems.map((item, idx) => {
+                  const ex = exerciseById(item.exerciseId)
+                  const isHold = ex?.track?.mode === 'hold'
+
+                  return (
+                    <div
+                      key={idx}
+                      className="rounded-lg border border-rule bg-paper/60 p-3.5 space-y-3"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <select
+                          value={item.exerciseId}
+                          onChange={(e) => updatePlanExerciseRow(idx, { exerciseId: e.target.value })}
+                          className="rounded border border-rule bg-white px-2.5 py-1.5 text-xs font-semibold text-ink focus:border-teal focus:outline-none flex-1 max-w-xs"
+                        >
+                          {EXERCISES.filter((e) => !!e.track).map((e) => (
+                            <option key={e.id} value={e.id}>
+                              {e.name} ({e.region})
+                            </option>
+                          ))}
+                        </select>
+
+                        {planItems.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removePlanExerciseRow(idx)}
+                            className="text-muted hover:text-danger p-1"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <label className="text-[11px] text-muted">
+                          Sets:
+                          <input
+                            type="number"
+                            min={1}
+                            max={10}
+                            value={item.targetSets}
+                            onChange={(e) => updatePlanExerciseRow(idx, { targetSets: parseInt(e.target.value) || 1 })}
+                            className="mt-1 w-full rounded border border-rule bg-white px-2 py-1 text-xs text-ink"
+                          />
+                        </label>
+
+                        {isHold ? (
+                          <label className="text-[11px] text-muted">
+                            Hold Seconds:
+                            <input
+                              type="number"
+                              min={3}
+                              max={300}
+                              value={item.targetHoldDurationS ?? 15}
+                              onChange={(e) => updatePlanExerciseRow(idx, { targetHoldDurationS: parseInt(e.target.value) || 15 })}
+                              className="mt-1 w-full rounded border border-rule bg-white px-2 py-1 text-xs text-ink"
+                            />
+                          </label>
+                        ) : (
+                          <label className="text-[11px] text-muted">
+                            Reps:
+                            <input
+                              type="number"
+                              min={1}
+                              max={100}
+                              value={item.targetReps ?? 10}
+                              onChange={(e) => updatePlanExerciseRow(idx, { targetReps: parseInt(e.target.value) || 10 })}
+                              className="mt-1 w-full rounded border border-rule bg-white px-2 py-1 text-xs text-ink"
+                            />
+                          </label>
+                        )}
+
+                        <label className="text-[11px] text-muted">
+                          Target ROM (°):
+                          <input
+                            type="number"
+                            min={10}
+                            max={180}
+                            placeholder="Optional"
+                            value={item.targetRomDeg ?? ''}
+                            onChange={(e) => updatePlanExerciseRow(idx, { targetRomDeg: parseInt(e.target.value) || undefined })}
+                            className="mt-1 w-full rounded border border-rule bg-white px-2 py-1 text-xs text-ink"
+                          />
+                        </label>
+
+                        <label className="text-[11px] text-muted">
+                          Side:
+                          <select
+                            value={item.side}
+                            onChange={(e) => updatePlanExerciseRow(idx, { side: e.target.value as 'left' | 'right' | 'both' })}
+                            className="mt-1 w-full rounded border border-rule bg-white px-2 py-1 text-xs text-ink"
+                          >
+                            <option value="right">Right</option>
+                            <option value="left">Left</option>
+                            <option value="both">Both sides</option>
+                          </select>
+                        </label>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+
+              {planMsg && (
+                <div
+                  role="alert"
+                  className={`rounded p-2.5 text-xs font-medium border ${
+                    planMsg.tone === 'ok'
+                      ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                      : 'bg-rose-50 text-danger border-rose-200'
+                  }`}
+                >
+                  {planMsg.text}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-rule">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setShowPlanBuilder(false)}
+                  className="text-xs"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  disabled={planSubmitting || !planTitle.trim()}
+                  className="text-xs"
+                >
+                  {planSubmitting ? 'Prescribing…' : 'Prescribe Plan'}
+                </Button>
+              </div>
+            </form>
+          </Card>
+        </div>
+      )}
+
+      {/* MODAL: Plan Editor (with Versioning & Change Summary) */}
+      {editingPlan && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
+          <Card className="w-full max-w-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-rule pb-3">
+              <div className="flex items-center gap-2">
+                <Edit3 className="h-5 w-5 text-teal" />
+                <h3 className="font-display text-base font-bold text-ink">
+                  Edit Clinical Plan (v{editingPlan.version} → v{editingPlan.version + 1})
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingPlan(null)}
+                className="text-muted hover:text-ink"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-amber-900 bg-amber-soft/40 p-2.5 rounded border border-amber/30">
+              <strong>Non-Silent Modification Notice:</strong> Modifying an active plan automatically increments its version and notifies the patient with your change summary.
+            </p>
+
+            <form onSubmit={handleEditPlanSubmit} className="space-y-4 text-xs">
+              <div className="grid sm:grid-cols-3 gap-3">
+                <label className="block text-ink font-medium sm:col-span-2">
+                  Plan Title *
+                  <input
+                    type="text"
+                    required
+                    value={planTitle}
+                    onChange={(e) => setPlanTitle(e.target.value)}
+                    className="mt-1 w-full rounded border border-rule px-3 py-2 text-xs focus:border-teal focus:outline-none"
+                  />
+                </label>
+
+                <label className="block text-ink font-medium">
+                  Plan Status
+                  <select
+                    value={editStatus}
+                    onChange={(e) => setEditStatus(e.target.value as any)}
+                    className="mt-1 w-full rounded border border-rule px-3 py-2 text-xs focus:border-teal focus:outline-none capitalize"
+                  >
+                    <option value="active">Active</option>
+                    <option value="paused">Paused</option>
+                    <option value="completed">Completed</option>
+                    <option value="archived">Archived</option>
+                  </select>
+                </label>
+              </div>
+
+              <div className="grid sm:grid-cols-2 gap-3">
+                <label className="block text-ink font-medium">
+                  Frequency
+                  <input
+                    type="text"
+                    required
+                    value={planFrequency}
+                    onChange={(e) => setPlanFrequency(e.target.value)}
+                    className="mt-1 w-full rounded border border-rule px-3 py-2 text-xs focus:border-teal focus:outline-none"
+                  />
+                </label>
+
+                <label className="block text-ink font-medium">
+                  End Date
+                  <input
+                    type="date"
+                    required
+                    value={planEndDate}
+                    onChange={(e) => setPlanEndDate(e.target.value)}
+                    className="mt-1 w-full rounded border border-rule px-3 py-2 text-xs focus:border-teal focus:outline-none"
+                  />
+                </label>
+              </div>
+
+              <label className="block text-ink font-medium">
+                Clinical Instructions
+                <textarea
+                  value={planInstructions}
+                  onChange={(e) => setPlanInstructions(e.target.value)}
+                  rows={2}
+                  className="mt-1 w-full rounded border border-rule px-3 py-2 text-xs focus:border-teal focus:outline-none"
+                />
+              </label>
+
+              <label className="block text-ink font-medium">
+                Change Summary / Clinical Rationale *
+                <input
+                  type="text"
+                  required
+                  value={editChangeSummary}
+                  onChange={(e) => setEditChangeSummary(e.target.value)}
+                  placeholder="e.g. Increased target reps from 10 to 12 as shoulder strength improved."
+                  className="mt-1 w-full rounded border border-amber-300 bg-amber-50/50 px-3 py-2 text-xs focus:border-teal focus:outline-none"
+                />
+              </label>
+
+              {/* Prescribed Exercises Editor */}
+              <div className="space-y-3 pt-2 border-t border-rule">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-ink uppercase tracking-wider text-[11px]">
+                    Prescribed Exercise Routines ({planItems.length})
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={addPlanExerciseRow}
+                    className="text-xs text-teal"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> Add Exercise
+                  </Button>
+                </div>
+
+                {planItems.map((item, idx) => {
+                  const ex = exerciseById(item.exerciseId)
+                  const isHold = ex?.track?.mode === 'hold'
+
+                  return (
+                    <div
+                      key={idx}
+                      className="rounded-lg border border-rule bg-paper/60 p-3.5 space-y-3"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <select
+                          value={item.exerciseId}
+                          onChange={(e) => updatePlanExerciseRow(idx, { exerciseId: e.target.value })}
+                          className="rounded border border-rule bg-white px-2.5 py-1.5 text-xs font-semibold text-ink focus:border-teal focus:outline-none flex-1 max-w-xs"
+                        >
+                          {EXERCISES.filter((e) => !!e.track).map((e) => (
+                            <option key={e.id} value={e.id}>
+                              {e.name} ({e.region})
+                            </option>
+                          ))}
+                        </select>
+
+                        {planItems.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removePlanExerciseRow(idx)}
+                            className="text-muted hover:text-danger p-1"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <label className="text-[11px] text-muted">
+                          Sets:
+                          <input
+                            type="number"
+                            min={1}
+                            max={10}
+                            value={item.targetSets}
+                            onChange={(e) => updatePlanExerciseRow(idx, { targetSets: parseInt(e.target.value) || 1 })}
+                            className="mt-1 w-full rounded border border-rule bg-white px-2 py-1 text-xs text-ink"
+                          />
+                        </label>
+
+                        {isHold ? (
+                          <label className="text-[11px] text-muted">
+                            Hold Seconds:
+                            <input
+                              type="number"
+                              min={3}
+                              max={300}
+                              value={item.targetHoldDurationS ?? 15}
+                              onChange={(e) => updatePlanExerciseRow(idx, { targetHoldDurationS: parseInt(e.target.value) || 15 })}
+                              className="mt-1 w-full rounded border border-rule bg-white px-2 py-1 text-xs text-ink"
+                            />
+                          </label>
+                        ) : (
+                          <label className="text-[11px] text-muted">
+                            Reps:
+                            <input
+                              type="number"
+                              min={1}
+                              max={100}
+                              value={item.targetReps ?? 10}
+                              onChange={(e) => updatePlanExerciseRow(idx, { targetReps: parseInt(e.target.value) || 10 })}
+                              className="mt-1 w-full rounded border border-rule bg-white px-2 py-1 text-xs text-ink"
+                            />
+                          </label>
+                        )}
+
+                        <label className="text-[11px] text-muted">
+                          Target ROM (°):
+                          <input
+                            type="number"
+                            min={10}
+                            max={180}
+                            placeholder="Optional"
+                            value={item.targetRomDeg ?? ''}
+                            onChange={(e) => updatePlanExerciseRow(idx, { targetRomDeg: parseInt(e.target.value) || undefined })}
+                            className="mt-1 w-full rounded border border-rule bg-white px-2 py-1 text-xs text-ink"
+                          />
+                        </label>
+
+                        <label className="text-[11px] text-muted">
+                          Side:
+                          <select
+                            value={item.side}
+                            onChange={(e) => updatePlanExerciseRow(idx, { side: e.target.value as 'left' | 'right' | 'both' })}
+                            className="mt-1 w-full rounded border border-rule bg-white px-2 py-1 text-xs text-ink"
+                          >
+                            <option value="right">Right</option>
+                            <option value="left">Left</option>
+                            <option value="both">Both sides</option>
+                          </select>
+                        </label>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+
+              {planMsg && (
+                <div
+                  role="alert"
+                  className={`rounded p-2.5 text-xs font-medium border ${
+                    planMsg.tone === 'ok'
+                      ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                      : 'bg-rose-50 text-danger border-rose-200'
+                  }`}
+                >
+                  {planMsg.text}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-rule">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setEditingPlan(null)}
+                  className="text-xs"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  disabled={planSubmitting || !planTitle.trim() || !editChangeSummary.trim()}
+                  className="text-xs"
+                >
+                  {planSubmitting ? 'Saving…' : 'Save & Publish Updates'}
+                </Button>
+              </div>
+            </form>
+          </Card>
+        </div>
+      )}
+
+      {/* MODAL: Plan Audit Events Trail */}
+      {viewingAudits && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
+          <Card className="w-full max-w-lg p-6 space-y-4 max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-rule pb-3">
+              <div className="flex items-center gap-2">
+                <History className="h-5 w-5 text-teal" />
+                <h3 className="font-display text-base font-bold text-ink">
+                  Plan Modification Audit Trail
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewingAudits(null)}
+                className="text-muted hover:text-ink"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {viewingAudits.length === 0 ? (
+              <p className="text-xs text-muted py-4">No audit events recorded for this plan.</p>
+            ) : (
+              <div className="space-y-3">
+                {viewingAudits.map((a) => (
+                  <div key={a.id} className="rounded border border-rule bg-paper p-3 text-xs space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-ink capitalize">
+                        {a.event_type.replace('_', ' ')}
+                      </span>
+                      <span className="text-[10px] text-muted font-mono">
+                        {new Date(a.created_at).toLocaleString()}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted">
+                      {a.change_summary}
+                    </p>
+                    {a.new_version && (
+                      <span className="inline-block rounded bg-teal-soft text-teal px-1.5 py-0.2 text-[10px] font-mono">
+                        Version {a.new_version}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
         </div>
       )}
 
