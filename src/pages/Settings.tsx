@@ -10,14 +10,14 @@ import {
   VolumeX,
 } from 'lucide-react'
 import { Button, Card, PageTitle } from '../components/ui'
-import { useUser } from '../lib/auth'
+import { useAuth } from '../lib/auth'
 import type { Side } from '../lib/engine'
 import { getPrefs, setPrefs } from '../lib/prefs'
 import { speechAvailable } from '../lib/speech'
 import { supabase } from '../lib/supabase'
 
 export default function Settings() {
-  const user = useUser()
+  const { user, profile } = useAuth()
   const nav = useNavigate()
   const [prefs, setLocalPrefs] = useState(getPrefs)
 
@@ -184,8 +184,15 @@ export default function Settings() {
                     <User className="h-5 w-5" aria-hidden />
                   </div>
                   <div>
-                    <p className="text-sm font-semibold text-ink">{user.email}</p>
-                    <p className="text-xs text-muted">Signed in · Row-Level Security active</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-semibold text-ink">{profile?.display_name || user.email}</p>
+                      <span className="rounded bg-paper px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted border border-rule">
+                        {profile?.role === 'professional'
+                          ? profile.is_verified_professional ? 'Verified Clinician' : 'Clinician'
+                          : profile?.role === 'wellness' ? 'Wellness' : 'Patient'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted">{user.email} · Private Row-Level Security active</p>
                   </div>
                 </div>
 

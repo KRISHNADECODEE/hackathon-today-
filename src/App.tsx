@@ -1,7 +1,7 @@
 import { Component, type ReactNode } from 'react'
 import { BrowserRouter, Link, NavLink, Route, Routes, useNavigate } from 'react-router-dom'
 import { Activity } from 'lucide-react'
-import { useUser } from './lib/auth'
+import { useAuth } from './lib/auth'
 import { supabase } from './lib/supabase'
 import Landing from './pages/Landing'
 import Dashboard from './pages/Dashboard'
@@ -34,32 +34,85 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
 }
 
 function Header() {
-  const user = useUser()
+  const { user, profile } = useAuth()
   const nav = useNavigate()
   const link = ({ isActive }: { isActive: boolean }) =>
-    `text-sm font-medium transition ${isActive ? 'text-white' : 'text-white/60 hover:text-white'}`
+    `text-sm font-medium transition whitespace-nowrap ${isActive ? 'text-white' : 'text-white/60 hover:text-white'}`
+
+  const isProfessional = profile?.role === 'professional'
+  const isWellness = profile?.role === 'wellness'
 
   return (
-    <header className="bg-ink text-white border-b border-white/10">
+    <header className="bg-ink text-white border-b border-white/10 sticky top-0 z-40">
       <div className="mx-auto flex h-14 max-w-6xl items-center gap-6 px-4">
-        <Link to="/" className="flex items-center gap-2 font-display text-lg font-extrabold tracking-tight">
+        <Link to="/" className="flex items-center gap-2 font-display text-lg font-extrabold tracking-tight shrink-0">
           <Activity className="h-5 w-5 text-teal" aria-hidden /> KinectIQ
         </Link>
         <nav className="flex flex-1 items-center gap-5 overflow-x-auto">
-          <NavLink to="/dashboard" className={link}>Dashboard</NavLink>
-          <NavLink to="/exercises" className={link}>Exercises</NavLink>
-          <NavLink to="/exercise" className={link}>Live Session</NavLink>
-          <NavLink to="/history" className={link}>History</NavLink>
+          {isProfessional ? (
+            <>
+              <NavLink to="/clinician" className={link}>Clinician Portal</NavLink>
+              <NavLink to="/dashboard" className={link}>Overview</NavLink>
+              <NavLink to="/exercises" className={link}>Exercise Catalog</NavLink>
+              <NavLink to="/exercise" className={link}>Camera Test</NavLink>
+              <NavLink to="/history" className={link}>Audit History</NavLink>
+            </>
+          ) : isWellness ? (
+            <>
+              <NavLink to="/dashboard" className={link}>Wellness Hub</NavLink>
+              <NavLink to="/exercise" className={link}>Quick Break</NavLink>
+              <NavLink to="/exercises" className={link}>Routines</NavLink>
+              <NavLink to="/history" className={link}>Streaks & History</NavLink>
+            </>
+          ) : (
+            <>
+              <NavLink to="/dashboard" className={link}>Dashboard</NavLink>
+              <NavLink to="/exercises" className={link}>Exercises</NavLink>
+              <NavLink to="/exercise" className={link}>Live Session</NavLink>
+              <NavLink to="/history" className={link}>History</NavLink>
+              <NavLink to="/clinician" className={link}>Clinician</NavLink>
+            </>
+          )}
           <NavLink to="/settings" className={link}>Settings</NavLink>
-          <NavLink to="/clinician" className={link}>Clinician</NavLink>
         </nav>
         {user ? (
-          <div className="flex items-center gap-3 text-sm">
-            <span className="hidden max-w-44 truncate text-white/60 sm:inline">{user.email}</span>
-            <button className="text-white/80 hover:text-white" onClick={async () => { await supabase?.auth.signOut(); nav('/') }}>Sign out</button>
+          <div className="flex items-center gap-3 text-sm shrink-0">
+            {profile?.role === 'professional' && (
+              <span
+                className={`hidden md:inline-flex items-center rounded px-2 py-0.5 text-xs font-semibold ${
+                  profile.is_verified_professional
+                    ? 'bg-teal/20 text-teal border border-teal/40'
+                    : 'bg-amber/20 text-amber border border-amber/40'
+                }`}
+                title={profile.is_verified_professional ? 'Verified Provider' : 'Practitioner Verification Pending'}
+              >
+                {profile.is_verified_professional ? 'Verified Clinician' : 'Clinician (Preview)'}
+              </span>
+            )}
+            {profile?.role === 'wellness' && (
+              <span className="hidden md:inline-flex items-center rounded bg-emerald-500/20 px-2 py-0.5 text-xs font-semibold text-emerald-300 border border-emerald-500/30">
+                Wellness
+              </span>
+            )}
+            {profile?.role === 'patient' && (
+              <span className="hidden md:inline-flex items-center rounded bg-white/10 px-2 py-0.5 text-xs font-semibold text-white/70 border border-white/20">
+                Patient
+              </span>
+            )}
+            <span className="hidden max-w-36 truncate text-white/70 sm:inline" title={user.email}>
+              {profile?.display_name || user.email}
+            </span>
+            <button
+              className="text-white/80 hover:text-white transition text-xs font-medium"
+              onClick={async () => { await supabase?.auth.signOut(); nav('/') }}
+            >
+              Sign out
+            </button>
           </div>
         ) : (
-          <Link to="/auth" className="text-sm font-medium text-white/80 hover:text-white">Sign in</Link>
+          <Link to="/auth" className="text-sm font-medium text-white/80 hover:text-white shrink-0">
+            Sign in
+          </Link>
         )}
       </div>
     </header>

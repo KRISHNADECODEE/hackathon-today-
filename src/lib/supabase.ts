@@ -9,6 +9,16 @@ export const supabase = url && key ? createClient(url, key) : null
 
 export const SUPABASE_MISSING = 'Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY in .env and restart the dev server.'
 
+export type UserRole = 'patient' | 'professional' | 'wellness'
+
+export type ProfileRow = {
+  id: string
+  display_name: string | null
+  role: UserRole
+  is_verified_professional: boolean
+  created_at?: string
+}
+
 export type SessionRow = {
   id: string
   user_id: string

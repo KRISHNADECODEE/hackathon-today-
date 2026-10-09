@@ -8,15 +8,17 @@ import {
   ShieldCheck,
 } from 'lucide-react'
 import { Badge, Card, LinkButton, deg, mmss } from '../components/ui'
-import { useUser } from '../lib/auth'
+import { useAuth, useUser } from '../lib/auth'
 import { exerciseById, EXERCISES } from '../lib/exercises'
 import { getPrefs } from '../lib/prefs'
 import { useSessions } from '../lib/useSessions'
 
 export default function Dashboard() {
-  const user = useUser()
+  const { user, profile } = useAuth()
   const prefs = getPrefs()
   const recentEx = exerciseById(prefs.lastExercise ?? 'shoulder_abduction') ?? EXERCISES[0]
+  const isProfessional = profile?.role === 'professional'
+  const isWellness = profile?.role === 'wellness'
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-12">
@@ -24,19 +26,30 @@ export default function Dashboard() {
       <div className="mb-10 flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
           <p className="font-mono text-xs uppercase tracking-wider text-teal">
-            KinectIQ Rehabilitation Hub
+            {isProfessional
+              ? 'Clinician & Rehabilitation Hub'
+              : isWellness
+              ? 'Everyday Wellness & Movement Hub'
+              : 'Physical Rehabilitation Hub'}
           </p>
           <h1 className="mt-1 font-display text-3xl font-extrabold tracking-tight text-ink md:text-4xl">
-            {user ? `Welcome back, ${user.email?.split('@')[0]}` : 'Welcome to KinectIQ'}
+            {user
+              ? `Welcome back, ${profile?.display_name || user.email?.split('@')[0]}`
+              : 'Welcome to KinectIQ'}
           </h1>
           <p className="mt-2 text-sm text-muted">
             {user
-              ? `Signed in as ${user.email}. Private session records are synced to your account.`
+              ? `Signed in as ${user.email} (${profile?.role ?? 'patient'}). Private session records are synced to your account.`
               : 'Webcam tracking runs locally on your device. Sign in to save and track your session history over time.'}
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          {isProfessional && (
+            <LinkButton to="/clinician" variant="primary">
+              Open Clinician Portal →
+            </LinkButton>
+          )}
           <LinkButton to="/exercises" variant="dark">
             <Compass className="h-4 w-4" aria-hidden /> Browse Library
           </LinkButton>
