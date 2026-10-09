@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import type { NormalizedLandmark, PoseLandmarker } from '@mediapipe/tasks-vision'
-import { AlertTriangle, Pause, Play, RotateCcw, Square, Volume2, VolumeX } from 'lucide-react'
+import { AlertTriangle, Bug, Pause, Play, RotateCcw, Square, Volume2, VolumeX } from 'lucide-react'
 import { Goniometer } from '../components/Goniometer'
 import { Meter } from '../components/Meter'
 import { Button, fmt, mmss } from '../components/ui'
@@ -23,6 +23,21 @@ function cameraFailure(e: unknown): Failure {
   return { title: 'The camera could not start', steps: [String((e as Error)?.message ?? e), 'Use a recent Chrome, Edge or Firefox over https or localhost.'] }
 }
 
+const PHASE_LABELS: Record<string, Record<string, string>> = {
+  biceps_curl: {
+    READY: 'START / EXTENDED',
+    MOVING: 'CURLING',
+    PEAK: 'CONTRACTED',
+    RETURNING: 'LOWERING',
+  },
+  elbow_flexion: {
+    READY: 'START / EXTENDED',
+    MOVING: 'BENDING',
+    PEAK: 'FLEXED',
+    RETURNING: 'LOWERING',
+  },
+}
+
 export default function Workspace() {
   const nav = useNavigate()
   const [params] = useSearchParams()
@@ -42,6 +57,16 @@ export default function Workspace() {
   const [activeMs, setActiveMs] = useState(0)
   const [flash, setFlash] = useState<string | null>(null)
   const [unsaved] = useState(() => !!sessionStorage.getItem(PENDING_KEY))
+  const [showDebug, setShowDebug] = useState(() => params.get('debug') === '1' || params.get('debug') === 'true')
+  const [armWarning, setArmWarning] = useState<string | null>(null)
+  const [debugStats, setDebugStats] = useState({
+    rawAngle: null as number | null,
+    shoulderVis: 0,
+    elbowVis: 0,
+    wristVis: 0,
+    lastRejection: null as string | null,
+    incompleteCount: 0,
+  })
 
   // Mutable session state read inside the animation loop.
   const s = useRef({
@@ -121,10 +146,47 @@ export default function Workspace() {
         draw(pts, v.videoWidth, v.videoHeight)
         setPosePresent(!!pts)
         const st = s.current
+
+        // Check arm landmark confidences
+        const shIdx = landmarkIndex('S.shoulder', st.side)
+        const elIdx = landmarkIndex('S.elbow', st.side)
+        const wrIdx = landmarkIndex('S.wrist', st.side)
+        const shV = pts ? (pts[shIdx]?.visibility ?? 0) : 0
+        const elV = pts ? (pts[elIdx]?.visibility ?? 0) : 0
+        const wrV = pts ? (pts[wrIdx]?.visibility ?? 0) : 0
+
+        if (st.run === 'running' && pts) {
+          if (exercise.id === 'biceps_curl' || exercise.id === 'elbow_flexion') {
+            if (elV < 0.55 || wrV < 0.55) {
+              setArmWarning(elV < 0.55 ? 'Elbow partially obscured. Keep your working elbow in clear view.' : 'Wrist partially obscured. Keep your working hand in clear view.')
+            } else {
+              setArmWarning(null)
+            }
+          } else {
+            setArmWarning(null)
+          }
+        } else {
+          setArmWarning(null)
+        }
+
         if (st.run !== 'running' || !st.tracker) return
         const f = st.tracker.update(pts, now - st.startPerf, v.videoWidth / v.videoHeight)
         setFrame(f)
         setActiveMs(st.activeAcc + now - st.resumedAt)
+        setDebugStats((prev) => ({
+          rawAngle: f.value,
+          shoulderVis: Math.round(shV * 100),
+          elbowVis: Math.round(elV * 100),
+          wristVis: Math.round(wrV * 100),
+          lastRejection: f.rejected === 'too_fast'
+            ? 'Movement too fast (<600ms)'
+            : f.rejected === 'limited_range'
+            ? 'Did not reach curl target'
+            : f.rejected === 'tracking_lost'
+            ? 'Tracking lost'
+            : prev.lastRejection,
+          incompleteCount: st.tracker?.incompleteReps ?? prev.incompleteCount,
+        }))
         if (f.calibrated && !st.wasCalibrated) {
           st.wasCalibrated = true
           cue(trackDef.cues.ready)
@@ -345,6 +407,12 @@ export default function Workspace() {
               </div>
             )}
           </div>
+          {armWarning && (
+            <div className="mt-3 rounded-md border border-amber/60 bg-amber/20 px-3 py-2 text-xs text-amber-200 flex items-center gap-2" role="alert">
+              <AlertTriangle className="h-4 w-4 text-amber shrink-0" />
+              <span>{armWarning}</span>
+            </div>
+          )}
           <div className="mt-3 space-y-1 text-sm text-white/70">
             <p><strong className="text-white">Starting posture:</strong> {trackDef.startHint}</p>
             <p><strong className="text-white">Guidance:</strong> {exercise.instructions[0]} {exercise.instructions[2] ?? ''}</p>
@@ -392,9 +460,20 @@ export default function Workspace() {
           </div>
 
           <ol className="flex gap-1 font-mono text-[11px]" aria-label="Movement phase">
-            {STATES.map((x) => (
-              <li key={x} className={`flex-1 rounded py-1.5 text-center ${run !== 'idle' && frame?.phase === x ? 'bg-teal text-white' : 'bg-slate-2 text-white/40'}`} aria-current={frame?.phase === x ? 'step' : undefined}>{x}</li>
-            ))}
+            {STATES.map((x) => {
+              const label = PHASE_LABELS[exercise.id]?.[x] ?? x
+              const isActive = run !== 'idle' && frame?.phase === x
+              return (
+                <li
+                  key={x}
+                  className={`flex-1 rounded py-1.5 text-center px-1 truncate ${isActive ? 'bg-teal text-white font-semibold' : 'bg-slate-2 text-white/40'}`}
+                  aria-current={isActive ? 'step' : undefined}
+                  title={label}
+                >
+                  {label}
+                </li>
+              )
+            })}
           </ol>
 
           <FormStatus frame={frame} run={run} hint={trackDef.startHint} />
@@ -423,9 +502,19 @@ export default function Workspace() {
               </Button>
               {run !== 'idle' && (
                 <Button variant="onDark" onClick={() => { s.current.tracker?.recalibrate(); s.current.wasCalibrated = false }} className="flex-1 text-xs">
-                  <RotateCcw className="h-4 w-4" aria-hidden /> Recalibrate posture
+                  <RotateCcw className="h-4 w-4" aria-hidden /> Recalibrate
                 </Button>
               )}
+              <Button
+                variant="onDark"
+                onClick={() => setShowDebug(!showDebug)}
+                className={`flex-1 text-xs ${showDebug ? 'border-teal text-teal' : ''}`}
+                aria-pressed={showDebug}
+                title="Toggle real-time computer vision diagnostics"
+              >
+                <Bug className="h-4 w-4" aria-hidden />
+                {showDebug ? 'Hide debug' : 'Diagnostics'}
+              </Button>
             </div>
             {run === 'idle' && (
               <div className="mt-3 text-center">
@@ -435,6 +524,76 @@ export default function Workspace() {
               </div>
             )}
           </div>
+
+          {showDebug && (
+            <div className="rounded-lg border border-teal/40 bg-black/90 p-4 font-mono text-xs text-white/80 space-y-2.5 shadow-lg" aria-label="CV Diagnostics">
+              <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                <span className="font-bold text-teal flex items-center gap-1.5">
+                  <Bug className="h-3.5 w-3.5" /> CV Diagnostic Panel
+                </span>
+                <span className="text-[10px] text-white/40">DEV ONLY</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-[11px]">
+                <div>
+                  <span className="text-white/40">Exercise:</span> {exercise.id}
+                </div>
+                <div>
+                  <span className="text-white/40">Arm:</span> <span className="uppercase font-semibold text-teal">{side}</span>
+                </div>
+              </div>
+              <div className="rounded bg-white/5 p-2 space-y-1">
+                <p className="text-[10px] uppercase tracking-wider text-white/40">Arm Joint Confidence</p>
+                <div className="grid grid-cols-3 gap-1 text-center text-[11px]">
+                  <div className="rounded bg-white/5 py-1">
+                    <span className="block text-[10px] text-white/40">Shoulder</span>
+                    <span className={debugStats.shoulderVis >= 50 ? 'text-teal font-bold' : 'text-amber font-bold'}>{debugStats.shoulderVis}%</span>
+                  </div>
+                  <div className="rounded bg-white/5 py-1">
+                    <span className="block text-[10px] text-white/40">Elbow</span>
+                    <span className={debugStats.elbowVis >= 50 ? 'text-teal font-bold' : 'text-amber font-bold'}>{debugStats.elbowVis}%</span>
+                  </div>
+                  <div className="rounded bg-white/5 py-1">
+                    <span className="block text-[10px] text-white/40">Wrist</span>
+                    <span className={debugStats.wristVis >= 50 ? 'text-teal font-bold' : 'text-amber font-bold'}>{debugStats.wristVis}%</span>
+                  </div>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-[11px]">
+                <div>
+                  <span className="text-white/40">Elbow Angle:</span>{' '}
+                  <span className="font-bold text-white">{frame?.value !== null && frame?.value !== undefined ? `${frame.value.toFixed(1)}°` : '—'}</span>
+                </div>
+                <div>
+                  <span className="text-white/40">Phase:</span>{' '}
+                  <span className="font-bold text-teal">{PHASE_LABELS[exercise.id]?.[frame?.phase ?? 'READY'] ?? frame?.phase ?? 'READY'}</span>
+                </div>
+              </div>
+              {trackDef.reps && (
+                <div className="text-[10px] text-white/60 space-y-0.5 border-t border-white/10 pt-1.5">
+                  <p className="text-white/40 font-semibold">Active Rep Thresholds:</p>
+                  <p>Rest (Extension): &gt; {trackDef.reps.rest}° · Start: &lt; {trackDef.reps.start}°</p>
+                  <p>Peak Target: ≤ {trackDef.reps.target}° · Hysteresis: ±{trackDef.reps.hysteresis}° · Min Rep: ≥{trackDef.reps.minRepMs}ms</p>
+                </div>
+              )}
+              <div className="text-[10px] border-t border-white/10 pt-1.5 space-y-0.5">
+                <p>
+                  <span className="text-white/40">Tracking Status:</span>{' '}
+                  <span className={frame?.tracking === 'ok' ? 'text-teal font-semibold' : 'text-amber font-semibold'}>{frame?.tracking ?? 'idle'}</span>
+                  {' · '}
+                  <span>Calibrated: {frame?.calibrated ? 'YES' : 'CALIBRATING'}</span>
+                </p>
+                <p>
+                  <span className="text-white/40">Incomplete Reps:</span> {debugStats.incompleteCount}
+                </p>
+                <p>
+                  <span className="text-white/40">Last Non-Count Reason:</span>{' '}
+                  <span className={debugStats.lastRejection ? 'text-amber font-semibold' : 'text-white/60'}>
+                    {debugStats.lastRejection ?? 'None (reps counting cleanly)'}
+                  </span>
+                </p>
+              </div>
+            </div>
+          )}
         </aside>
       </div>
     </div>

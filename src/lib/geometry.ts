@@ -25,6 +25,11 @@ export function vectorAngle(u: Vec, v: Vec): number | null {
 /** Angle ABC at joint B, in degrees, or null when unavailable. */
 export function jointAngle(a?: Point, b?: Point, c?: Point): number | null {
   if (!a || !b || !c) return null
+  if (
+    !Number.isFinite(a.x) || !Number.isFinite(a.y) ||
+    !Number.isFinite(b.x) || !Number.isFinite(b.y) ||
+    !Number.isFinite(c.x) || !Number.isFinite(c.y)
+  ) return null
   return vectorAngle(sub(a, b), sub(c, b))
 }
 
