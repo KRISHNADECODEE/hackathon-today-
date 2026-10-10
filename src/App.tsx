@@ -5,6 +5,8 @@ import { useAuth } from './lib/auth'
 import { supabase } from './lib/supabase'
 import { useDeskReminders } from './lib/useDeskReminders'
 import { ReminderToast } from './components/ReminderToast'
+import { OfflineIndicator } from './components/OfflineIndicator'
+import { clearOfflineQueueForUser } from './lib/offlineQueue'
 import Landing from './pages/Landing'
 import Dashboard from './pages/Dashboard'
 import ExerciseLibrary from './pages/ExerciseLibrary'
@@ -110,7 +112,13 @@ function Header() {
             </span>
             <button
               className="text-white/80 hover:text-white transition text-xs font-medium"
-              onClick={async () => { await supabase?.auth.signOut(); nav('/') }}
+              onClick={async () => {
+                if (user) {
+                  await clearOfflineQueueForUser(user.id)
+                }
+                await supabase?.auth.signOut()
+                nav('/')
+              }}
             >
               Sign out
             </button>
@@ -131,6 +139,7 @@ function AppShell() {
   return (
     <>
       <Header />
+      <OfflineIndicator />
       <ReminderToast alert={activeAlert} onDismiss={dismissAlert} onSnooze={snoozeReminder} />
       <ErrorBoundary>
         <main>

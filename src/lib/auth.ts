@@ -55,6 +55,7 @@ export function useProfile(user: User | null | undefined) {
             display_name: data.display_name ?? null,
             role: data.role ?? 'patient',
             is_verified_professional: !!data.is_verified_professional,
+            wellness_profile: data.wellness_profile ?? null,
             created_at: data.created_at,
           })
         }
@@ -86,4 +87,17 @@ export function useAuth() {
   const profile = useProfile(user)
   const loading = user === undefined || (user !== null && profile === undefined)
   return { user, profile, loading }
+}
+
+/** Synchronizes the user's wellness profile to Supabase when online. */
+export async function updateRemoteWellnessProfile(
+  profile: import('./wellnessNutrition').WellnessProfile | null
+): Promise<void> {
+  if (!supabase) return
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return
+  await supabase
+    .from('profiles')
+    .update({ wellness_profile: profile })
+    .eq('id', user.id)
 }

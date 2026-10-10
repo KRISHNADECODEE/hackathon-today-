@@ -25,11 +25,15 @@ import { useDeskReminders } from '../lib/useDeskReminders'
 import { useSessions } from '../lib/useSessions'
 import { WELLNESS_ROUTINES, type WellnessRoutine } from '../lib/wellnessRoutines'
 import { computeTodayStats, computeWeeklyStats } from '../lib/wellnessStats'
+import { WellnessProfileSection } from '../components/WellnessProfileSection'
+import { useOfflineSync } from '../lib/pwa'
+import { queuedSessionToRow } from '../lib/offlineQueue'
 
 export default function WellnessHub() {
   const nav = useNavigate()
   const { user } = useAuth()
   const { state } = useSessions(user)
+  const { queuedItems } = useOfflineSync(user?.id)
   const {
     prefs: reminderPrefs,
     isPaused,
@@ -57,7 +61,9 @@ export default function WellnessHub() {
     setPrefs({ dailyGoals: updated })
   }
 
-  const sessions = state.kind === 'ok' ? state.data : []
+  const onlineSessions = state.kind === 'ok' ? state.data : []
+  const offlineRows = queuedItems.filter((q) => q.status !== 'synced').map(queuedSessionToRow)
+  const sessions = [...onlineSessions, ...offlineRows]
   const todayStats = computeTodayStats(sessions, dailyGoals)
   const weeklyStats = computeWeeklyStats(sessions)
 
@@ -105,6 +111,30 @@ export default function WellnessHub() {
         <div className="mb-8 flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
           <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
           <span>Notice: {state.message} (showing local device telemetry)</span>
+        </div>
+      )}
+
+      {/* Scope and Clinical Plan Distinction Banner */}
+      <div className="mb-8 rounded-lg border border-rule/70 bg-paper p-3 text-xs text-muted flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Badge tone="neutral">Self-Directed Lifestyle Habits</Badge>
+          <span>
+            Everyday wellness activities are independent micro-movements for workplace mobility.
+          </span>
+        </div>
+        {user && (
+          <Link to="/dashboard" className="text-teal hover:underline font-medium shrink-0">
+            View Prescribed Rehabilitation Plans →
+          </Link>
+        )}
+      </div>
+
+      {offlineRows.length > 0 && (
+        <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50/70 p-3 text-xs text-amber-900 flex items-center justify-between gap-2">
+          <span>
+            <strong>Local Activity Included:</strong> {offlineRows.length} offline {offlineRows.length === 1 ? 'session' : 'sessions'} completed without internet {offlineRows.length === 1 ? 'is' : 'are'} counted toward today&apos;s goals.
+          </span>
+          <Badge tone="amber">Pending Sync</Badge>
         </div>
       )}
 
@@ -417,6 +447,9 @@ export default function WellnessHub() {
           )}
         </Card>
       </div>
+
+      {/* Optional Age-Aware Wellness & Nutrition Guidance Section */}
+      <WellnessProfileSection />
 
       {/* Posture Awareness Spotlight Card */}
       <section className="mb-12">

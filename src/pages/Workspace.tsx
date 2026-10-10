@@ -10,6 +10,11 @@ import { exerciseById, EXERCISES, VIEW_LABEL } from '../lib/exercises'
 import { getPrefs, setPrefs } from '../lib/prefs'
 import { getPoseLandmarker, POSE_CONNECTIONS } from '../lib/pose'
 import { say, speechAvailable } from '../lib/speech'
+import {
+  createVideoSourceAdapter,
+  TestHarnessAdapter,
+  type VideoSourceId,
+} from '../lib/videoSource'
 
 type Run = 'idle' | 'running' | 'paused'
 type Failure = { title: string; steps: string[] }
@@ -47,6 +52,10 @@ export default function Workspace() {
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [videoSourceId, setVideoSourceId] = useState<VideoSourceId>('webcam')
+  const [testFile, setTestFile] = useState<File | null>(null)
+  const [deliveryLatency, setDeliveryLatency] = useState<number | null>(null)
+  const [inferenceLatency, setInferenceLatency] = useState<number | null>(null)
   const [loading, setLoading] = useState<string | null>('Requesting camera access…')
   const [failure, setFailure] = useState<Failure | null>(null)
   const [aspect, setAspect] = useState(16 / 9)
@@ -86,7 +95,6 @@ export default function Workspace() {
 
     let cancelled = false
     let raf = 0
-    let stream: MediaStream | null = null
 
     const cue = (text: string, key = text, gap = 4000) => s.current.voice && say(text, key, gap)
     const showFlash = (text: string) => {
@@ -128,6 +136,12 @@ export default function Workspace() {
       })
     }
 
+    let frameCount = 0
+    const adapter = createVideoSourceAdapter(videoSourceId)
+    if (videoSourceId === 'test_harness' && testFile && adapter instanceof TestHarnessAdapter) {
+      adapter.setTestFile(testFile)
+    }
+
     function loop(lm: PoseLandmarker) {
       let lastTime = -1
       const tick = () => {
@@ -137,12 +151,19 @@ export default function Workspace() {
         lastTime = v.currentTime
         const now = performance.now()
         let pts: NormalizedLandmark[] | undefined
+        const t0 = performance.now()
         try {
           pts = lm.detectForVideo(v, now).landmarks[0]
         } catch (e) {
           cancelAnimationFrame(raf)
           setFailure({ title: 'Pose tracking stopped', steps: [String((e as Error)?.message ?? e), 'Reload the page to restart tracking.'] })
           return
+        }
+        const inferMs = performance.now() - t0
+        frameCount++
+        if (frameCount % 15 === 0) {
+          setDeliveryLatency(adapter.getDeliveryLatency())
+          setInferenceLatency(inferMs)
         }
         draw(pts, v.videoWidth, v.videoHeight)
         setPosePresent(!!pts)
@@ -222,21 +243,21 @@ export default function Workspace() {
     }
 
     ;(async () => {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        setFailure({ title: 'This browser cannot access a camera', steps: ['Open KinectIQ in a recent Chrome, Edge or Firefox.', 'Use https or http://localhost.'] })
-        return
-      }
+      setLoading(videoSourceId === 'test_harness' ? 'Initializing test harness video feed…' : 'Requesting camera access…')
+      const v = videoRef.current!
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }, audio: false })
+        const meta = await adapter.attach(v)
+        if (cancelled) {
+          adapter.detach()
+          return
+        }
+        setAspect(meta.aspect)
       } catch (e) {
         if (!cancelled) setFailure(cameraFailure(e))
         return
       }
-      if (cancelled) return stream.getTracks().forEach((t) => t.stop())
-      const v = videoRef.current!
-      v.srcObject = stream
-      await v.play().catch(() => {})
-      setAspect(v.videoWidth && v.videoHeight ? v.videoWidth / v.videoHeight : 16 / 9)
+      if (cancelled) return
+
       setLoading('Loading pose model…')
       let lm: PoseLandmarker
       try {
@@ -253,10 +274,10 @@ export default function Workspace() {
     return () => {
       cancelled = true
       cancelAnimationFrame(raf)
-      stream?.getTracks().forEach((t) => t.stop())
+      adapter.detach()
       window.speechSynthesis?.cancel()
     }
-  }, [exercise])
+  }, [exercise, videoSourceId, testFile])
 
   if (!exercise.track) {
     return (
@@ -359,22 +380,78 @@ export default function Workspace() {
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="font-display text-2xl font-bold">{exercise.name}</h1>
               {run === 'idle' && (
-                <select
-                  value={exercise.id}
-                  onChange={(e) => nav(`/exercise?id=${e.target.value}`)}
-                  className="rounded-md border border-white/20 bg-slate px-2.5 py-1.5 text-xs text-white outline-none focus:border-teal"
-                  aria-label="Switch exercise"
-                >
-                  {EXERCISES.filter((e) => !!e.track).map((e) => (
-                    <option key={e.id} value={e.id} className="bg-ink text-white">
-                      {e.name} ({e.region})
+                <>
+                  <select
+                    value={exercise.id}
+                    onChange={(e) => nav(`/exercise?id=${e.target.value}`)}
+                    className="rounded-md border border-white/20 bg-slate px-2.5 py-1.5 text-xs text-white outline-none focus:border-teal"
+                    aria-label="Switch exercise"
+                  >
+                    {EXERCISES.filter((e) => !!e.track).map((e) => (
+                      <option key={e.id} value={e.id} className="bg-ink text-white">
+                        {e.name} ({e.region})
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={videoSourceId}
+                    onChange={(e) => {
+                      setVideoSourceId(e.target.value as VideoSourceId)
+                      setFailure(null)
+                    }}
+                    className="rounded-md border border-white/20 bg-slate px-2.5 py-1.5 text-xs text-white outline-none focus:border-teal"
+                    aria-label="Video Input Source"
+                  >
+                    <option value="webcam" className="bg-ink text-white">
+                      Source: Webcam (Default)
                     </option>
-                  ))}
-                </select>
+                    <option value="test_harness" className="bg-ink text-white">
+                      Source: CCTV / High-Angle Test Harness
+                    </option>
+                  </select>
+                </>
               )}
             </div>
             <p className="font-mono text-xs text-white/50">{VIEW_LABEL[exercise.view]} · Video is processed locally in this browser</p>
           </div>
+          {videoSourceId === 'test_harness' && (
+            <div className="mb-3 rounded-md border border-sky-500/40 bg-sky-950/40 p-3 text-xs text-sky-200">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="font-semibold text-sky-100 flex items-center gap-1.5">
+                    <span className="inline-block h-2 w-2 rounded-full bg-sky-400 animate-pulse"></span>
+                    CCTV & Elevated-Angle Evaluation Harness
+                  </div>
+                  <p className="mt-1 text-sky-200/80">
+                    Evaluating pose stability on simulated or prerecorded elevated-angle video. Real CCTV hardware compatibility remains unverified.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="cursor-pointer rounded bg-sky-700/60 px-2.5 py-1 text-xs font-medium text-white hover:bg-sky-600/60 transition-colors">
+                    <span>{testFile ? testFile.name : 'Load Prerecorded MP4/WebM'}</span>
+                    <input
+                      type="file"
+                      accept="video/mp4,video/webm"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0]
+                        if (f) setTestFile(f)
+                      }}
+                    />
+                  </label>
+                  {testFile && (
+                    <button
+                      type="button"
+                      onClick={() => setTestFile(null)}
+                      className="text-xs text-sky-300 hover:text-white underline"
+                    >
+                      Reset to Synthetic
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
           {exercise.id === 'posture' && (
             <div className="mb-3 rounded-md border border-amber/40 bg-amber-soft/20 px-3 py-2 text-xs text-amber-200 flex items-start gap-2">
               <AlertTriangle className="h-4 w-4 text-amber shrink-0 mt-0.5" />
@@ -402,7 +479,14 @@ export default function Workspace() {
             <video ref={videoRef} playsInline muted className="absolute inset-0 h-full w-full -scale-x-100 object-contain" />
             <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full -scale-x-100 object-contain" />
             {!failure && !loading && (
-              <span className={`absolute left-3 top-3 rounded px-2 py-1 font-mono text-xs ${tracking.tone === 'ok' ? 'bg-teal/90' : 'bg-amber/90'}`}>{tracking.text}</span>
+              <>
+                <span className={`absolute left-3 top-3 rounded px-2 py-1 font-mono text-xs ${tracking.tone === 'ok' ? 'bg-teal/90' : 'bg-amber/90'}`}>{tracking.text}</span>
+                {!navigator.onLine && (
+                  <span className="absolute right-3 top-3 rounded bg-amber-600/90 px-2 py-1 font-mono text-xs text-white">
+                    Offline: Local Model
+                  </span>
+                )}
+              </>
             )}
             {flash && <div className="absolute inset-x-0 top-1/3 text-center font-display text-5xl font-extrabold drop-shadow-lg" aria-live="polite">{flash}</div>}
             {(loading || failure) && (
@@ -588,6 +672,29 @@ export default function Workspace() {
                   <p>Peak Target: ≤ {trackDef.reps.target}° · Hysteresis: ±{trackDef.reps.hysteresis}° · Min Rep: ≥{trackDef.reps.minRepMs}ms</p>
                 </div>
               )}
+              <div className="rounded bg-white/5 p-2 space-y-1">
+                <p className="text-[10px] uppercase tracking-wider text-white/40">Input & Latency Telemetry</p>
+                <div className="grid grid-cols-2 gap-1 text-[11px]">
+                  <div>
+                    <span className="text-white/40">Source:</span>{' '}
+                    <span className="text-teal font-semibold">{videoSourceId === 'webcam' ? 'Webcam' : 'CCTV Harness'}</span>
+                  </div>
+                  <div>
+                    <span className="text-white/40">Delivery Latency:</span>{' '}
+                    <span className="text-white font-semibold">{deliveryLatency != null ? `${deliveryLatency.toFixed(1)} ms` : '< 16 ms'}</span>
+                  </div>
+                  <div>
+                    <span className="text-white/40">Inference Time:</span>{' '}
+                    <span className="text-white font-semibold">{inferenceLatency != null ? `${inferenceLatency.toFixed(1)} ms` : '—'}</span>
+                  </div>
+                  <div>
+                    <span className="text-white/40">E2E Latency:</span>{' '}
+                    <span className={((deliveryLatency ?? 16) + (inferenceLatency ?? 0)) < 250 ? 'text-teal font-bold' : 'text-amber font-bold'}>
+                      {`${((deliveryLatency ?? 16) + (inferenceLatency ?? 0)).toFixed(1)} ms (<250ms target)`}
+                    </span>
+                  </div>
+                </div>
+              </div>
               <div className="text-[10px] border-t border-white/10 pt-1.5 space-y-0.5">
                 <p>
                   <span className="text-white/40">Tracking Status:</span>{' '}

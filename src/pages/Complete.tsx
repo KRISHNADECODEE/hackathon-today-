@@ -1,14 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { CheckCircle2, CloudOff, Loader2 } from 'lucide-react'
+import { CheckCircle2, CloudOff, HardDrive, Loader2 } from 'lucide-react'
 import { Badge, Button, Card, LinkButton, PageTitle, fmt, evidenceLabel, evidenceTone, mmss, pct } from '../components/ui'
 import type { SessionSummary } from '../lib/engine'
 import { exerciseById } from '../lib/exercises'
 import { useUser } from '../lib/auth'
 import { saveSession, supabase, SUPABASE_MISSING } from '../lib/supabase'
+import { enqueueOfflineSession, syncPendingSessions } from '../lib/offlineQueue'
 import { PENDING_KEY } from './Workspace'
 
-type Save = { kind: 'idle' } | { kind: 'saving' } | { kind: 'saved' } | { kind: 'error'; message: string }
+type Save =
+  | { kind: 'idle' }
+  | { kind: 'saving' }
+  | { kind: 'saved' }
+  | { kind: 'queued'; message: string }
+  | { kind: 'error'; message: string }
 
 function readPending(): SessionSummary | null {
   try { return JSON.parse(sessionStorage.getItem(PENDING_KEY) ?? 'null') } catch { return null }
@@ -24,16 +30,57 @@ export default function Complete() {
     if (!summary || inFlight.current) return
     inFlight.current = true
     setSave({ kind: 'saving' })
+
+    // If offline and signed in, queue in IndexedDB immediately
+    if (!navigator.onLine && user) {
+      try {
+        await enqueueOfflineSession(summary, user.id)
+        sessionStorage.removeItem(PENDING_KEY)
+        setSave({
+          kind: 'queued',
+          message: 'Offline: session safely queued on this device. It will automatically synchronize once reconnected.',
+        })
+      } catch (e) {
+        setSave({ kind: 'error', message: `Could not save offline: ${(e as Error).message}` })
+      } finally {
+        inFlight.current = false
+      }
+      return
+    }
+
     try {
       await saveSession(summary)
-      sessionStorage.removeItem(PENDING_KEY) // only discard the local copy once the backend confirmed
+      sessionStorage.removeItem(PENDING_KEY) // only discard local copy once backend confirmed
       setSave({ kind: 'saved' })
+
+      // Also trigger any previously queued sessions if online
+      if (user) {
+        void syncPendingSessions(supabase, user.id)
+      }
     } catch (e) {
-      setSave({ kind: 'error', message: navigator.onLine ? (e as Error).message : 'You appear to be offline. Your result is kept on this device; retry when connected.' })
+      if (!navigator.onLine && user) {
+        try {
+          await enqueueOfflineSession(summary, user.id)
+          sessionStorage.removeItem(PENDING_KEY)
+          setSave({
+            kind: 'queued',
+            message: 'Network offline: session queued in local storage. Will auto-sync when online.',
+          })
+          return
+        } catch {
+          // Fall through to error
+        }
+      }
+      setSave({
+        kind: 'error',
+        message: navigator.onLine
+          ? (e as Error).message
+          : 'You appear to be offline. Your result is kept on this device; retry when connected.',
+      })
     } finally {
       inFlight.current = false
     }
-  }, [summary])
+  }, [summary, user])
 
   // Save automatically once a signed-in user is known.
   useEffect(() => {
@@ -70,6 +117,8 @@ export default function Complete() {
       <div className="mb-6 flex flex-wrap items-center gap-2">
         <Badge tone={evidenceTone(summary.evidence)}>{evidenceLabel[summary.evidence]}</Badge>
         {!summary.calibrated && <Badge tone="amber">Posture was never calibrated — no form check</Badge>}
+        {save.kind === 'queued' && <Badge tone="amber">Pending Sync (Offline)</Badge>}
+        {save.kind === 'saved' && <Badge tone="teal">Synchronized to Cloud</Badge>}
       </div>
 
       <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-rule bg-rule md:grid-cols-3">
@@ -107,11 +156,14 @@ export default function Complete() {
             <p className="flex items-center gap-2 text-sm"><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Saving to your history…</p>
           ) : save.kind === 'saved' ? (
             <p className="flex items-center gap-2 text-sm text-[#0e6457]"><CheckCircle2 className="h-4 w-4" aria-hidden /> Saved to {user.email}'s history.</p>
+          ) : save.kind === 'queued' ? (
+            <p className="flex items-center gap-2 text-sm text-amber-700"><HardDrive className="h-4 w-4" aria-hidden /> {save.message}</p>
           ) : save.kind === 'error' ? (
             <p className="text-sm text-danger">Not saved: {save.message}</p>
           ) : null}
         </div>
         {supabase && user === null && <LinkButton to="/auth?next=/complete">Sign in to save</LinkButton>}
+        {save.kind === 'queued' && navigator.onLine && <Button onClick={doSave}>Sync now</Button>}
         {save.kind === 'error' && <Button onClick={doSave}>Retry save</Button>}
         <LinkButton to="/history" variant="ghost">Go to history</LinkButton>
       </Card>

@@ -16,6 +16,7 @@ export type ProfileRow = {
   display_name: string | null
   role: UserRole
   is_verified_professional: boolean
+  wellness_profile?: import('./wellnessNutrition').WellnessProfile | null
   created_at?: string
 }
 

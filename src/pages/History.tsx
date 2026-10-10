@@ -7,6 +7,8 @@ import { useUser } from '../lib/auth'
 import { exerciseById } from '../lib/exercises'
 import { supabase, SUPABASE_MISSING } from '../lib/supabase'
 import { useSessions } from '../lib/useSessions'
+import { useOfflineSync } from '../lib/pwa'
+import { HardDrive, RefreshCw } from 'lucide-react'
 
 /** Renders children only for a signed-in user; otherwise explains what to do. */
 export function RequireUser({ children }: { children: (user: NonNullable<ReturnType<typeof useUser>>) => React.ReactNode }) {
@@ -33,8 +35,11 @@ export default function History() {
 
 function HistoryList({ user }: { user: NonNullable<ReturnType<typeof useUser>> }) {
   const { state, reload } = useSessions(user)
+  const { queuedItems, isSyncing, triggerSync, isOnline } = useOfflineSync(user.id)
   const [selectedEx, setSelectedEx] = useState<string>('all')
   const [dateRange, setDateRange] = useState<'all' | '7d' | '30d'>('all')
+
+  const pendingOffline = queuedItems.filter((q) => q.status !== 'synced')
 
   const rawSessions = state.kind === 'ok' ? state.data : undefined
 
@@ -81,7 +86,7 @@ function HistoryList({ user }: { user: NonNullable<ReturnType<typeof useUser>> }
       )}
 
       {state.kind === 'error' && (
-        <Card className="p-5">
+        <Card className="p-5 mb-6">
           <p role="alert" className="text-danger">
             {state.auth
               ? 'Your sign-in has expired. Sign in again to see your sessions.'
@@ -90,6 +95,52 @@ function HistoryList({ user }: { user: NonNullable<ReturnType<typeof useUser>> }
           <div className="mt-4">
             {state.auth ? <LinkButton to="/auth?next=/history">Sign in again</LinkButton> : <Button onClick={reload}>Retry</Button>}
           </div>
+        </Card>
+      )}
+
+      {pendingOffline.length > 0 && (
+        <Card className="mb-6 border-amber-300 bg-amber-50/40 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <div className="flex items-center gap-2 text-amber-900 font-semibold text-sm">
+              <HardDrive className="h-4 w-4 text-amber-600" />
+              <span>Offline Sessions Stored on This Device ({pendingOffline.length})</span>
+            </div>
+            {isOnline && (
+              <Button
+                onClick={() => void triggerSync()}
+                disabled={isSyncing}
+                className="text-xs"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 mr-1 ${isSyncing ? 'animate-spin' : ''}`} />
+                {isSyncing ? 'Syncing...' : 'Sync to Cloud'}
+              </Button>
+            )}
+          </div>
+          <p className="text-xs text-amber-800 mb-3">
+            These records were completed while offline. They are safely preserved in local IndexedDB storage and will automatically synchronize.
+          </p>
+          <ul className="divide-y divide-amber-200/60 rounded border border-amber-200 bg-white">
+            {pendingOffline.map((item) => {
+              const ex = exerciseById(item.summary.exercise)
+              return (
+                <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 p-3 text-xs">
+                  <div>
+                    <span className="font-semibold text-ink">{ex?.name ?? item.summary.exercise}</span>
+                    <span className="text-muted ml-2">({new Date(item.summary.startedAt).toLocaleString()})</span>
+                    {item.lastError && (
+                      <p className="text-rose-600 text-[11px] mt-0.5">{item.lastError}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono">{item.summary.validReps} reps</span>
+                    <Badge tone={item.status === 'syncing' ? 'teal' : item.status === 'failed' ? 'danger' : 'amber'}>
+                      {item.status === 'syncing' ? 'Syncing…' : item.status === 'failed' ? 'Sync Failed' : 'Pending Sync'}
+                    </Badge>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
         </Card>
       )}
 

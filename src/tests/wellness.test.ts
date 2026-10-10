@@ -8,6 +8,7 @@ import { SessionTracker } from '../lib/engine'
 import type { SessionRow } from '../lib/supabase'
 import type { DeskReminderPrefs } from '../lib/prefs'
 import type { Point } from '../lib/geometry'
+import { queuedSessionToRow } from '../lib/offlineQueue'
 
 describe('Quiet Hours Timing', () => {
   it('correctly handles overnight quiet hours (18:00 to 09:00)', () => {
@@ -200,6 +201,67 @@ describe('Daily Goals, Active Time and History Computation', () => {
     const stats2 = computeTodayStats(user2Sessions, { activeMinutes: 10, breakSessions: 2 }, today)
     expect(stats2.completedSessions).toBe(1)
     expect(stats2.activeMinutes).toBe(3)
+  })
+
+  it('accurately counts offline queued sessions converted via queuedSessionToRow in today stats', () => {
+    const today = new Date('2026-10-09T12:00:00')
+    const onlineSession = makeSession('online-1', new Date('2026-10-09T09:00:00'), 'posture', 120000, 0, 'user-1')
+
+    // Simulate an offline queued session
+    const offlineQueued = {
+      id: 'offline-1',
+      userId: 'user-1',
+      status: 'pending' as const,
+      queuedAt: new Date('2026-10-09T11:00:00').toISOString(),
+      retryCount: 0,
+      summary: {
+        id: 'offline-1',
+        exercise: 'sit_to_stand',
+        exerciseVersion: 1,
+        mode: 'reps' as const,
+        metricLabel: 'Reps',
+        metricUnit: 'deg' as const,
+        direction: 'up' as const,
+        side: 'both' as const,
+        startedAt: new Date('2026-10-09T11:00:00').toISOString(),
+        endedAt: new Date('2026-10-09T11:02:00').toISOString(),
+        durationMs: 120000,
+        validReps: 10,
+        incompleteReps: 0,
+        peak: 90,
+        meanPeak: 90,
+        trackingQuality: 0.95,
+        calibrated: true,
+        evidence: 'complete' as const,
+        extra: {},
+        reps: [],
+        events: [],
+      },
+    }
+
+    const offlineRow = queuedSessionToRow(offlineQueued)
+    expect(offlineRow.id).toBe('offline-1')
+    expect(offlineRow.exercise).toBe('sit_to_stand')
+    expect(offlineRow.valid_reps).toBe(10)
+
+    const combinedStats = computeTodayStats([onlineSession, offlineRow], { activeMinutes: 10, breakSessions: 2 }, today)
+    expect(combinedStats.completedSessions).toBe(2)
+    expect(combinedStats.activeMinutes).toBe(4) // 2 min + 2 min
+    expect(combinedStats.validReps).toBe(10)
+    expect(combinedStats.postureChecksCount).toBe(1)
+  })
+
+  it('distinguishes self-directed wellness sessions from clinical plans via plan_id', () => {
+    const today = new Date('2026-10-09T12:00:00')
+    const selfDirected = makeSession('s-wellness', today, 'sit_to_stand', 120000, 10)
+    expect(selfDirected.plan_id).toBeUndefined()
+
+    const clinicalSession: SessionRow = {
+      ...selfDirected,
+      id: 's-clinical',
+      plan_id: 'plan-rx-101',
+    }
+    expect(clinicalSession.plan_id).toBe('plan-rx-101')
   })
 })
 

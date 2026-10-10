@@ -1,3 +1,5 @@
+import type { WellnessProfile } from './wellnessNutrition'
+
 // Per-device conveniences only. Storage can be unavailable (private mode), so every access is guarded.
 const KEY = 'kinectiq.prefs'
 
@@ -22,6 +24,7 @@ export type Prefs = {
   side: 'left' | 'right'
   reminder: DeskReminderPrefs
   dailyGoals: DailyGoals
+  wellnessProfile: WellnessProfile | null
 }
 
 export const DEFAULT_REMINDER: DeskReminderPrefs = {
@@ -45,6 +48,7 @@ const DEFAULTS: Prefs = {
   side: 'right',
   reminder: DEFAULT_REMINDER,
   dailyGoals: DEFAULT_GOALS,
+  wellnessProfile: null,
 }
 
 export function getPrefs(): Prefs {
@@ -55,6 +59,7 @@ export function getPrefs(): Prefs {
       ...raw,
       reminder: { ...DEFAULT_REMINDER, ...(raw.reminder ?? {}) },
       dailyGoals: { ...DEFAULT_GOALS, ...(raw.dailyGoals ?? {}) },
+      wellnessProfile: raw.wellnessProfile ?? null,
     }
   } catch {
     return DEFAULTS
@@ -67,6 +72,7 @@ export type PartialPrefs = {
   side?: 'left' | 'right'
   reminder?: Partial<DeskReminderPrefs>
   dailyGoals?: Partial<DailyGoals>
+  wellnessProfile?: WellnessProfile | null
 }
 
 export function setPrefs(p: PartialPrefs) {
@@ -77,6 +83,7 @@ export function setPrefs(p: PartialPrefs) {
       ...p,
       reminder: p.reminder ? { ...current.reminder, ...p.reminder } : current.reminder,
       dailyGoals: p.dailyGoals ? { ...current.dailyGoals, ...p.dailyGoals } : current.dailyGoals,
+      wellnessProfile: p.wellnessProfile !== undefined ? p.wellnessProfile : current.wellnessProfile,
     }
     localStorage.setItem(KEY, JSON.stringify(next))
     window.dispatchEvent(new Event('kinectiq:prefs_changed'))

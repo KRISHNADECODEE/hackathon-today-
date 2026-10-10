@@ -1,4 +1,4 @@
-import { ArrowRight, Camera, Compass, Database, Lock, Play } from 'lucide-react'
+import { ArrowRight, Camera, Compass, Database, Lock, Play, Sparkles } from 'lucide-react'
 import { Goniometer } from '../components/Goniometer'
 import { LinkButton } from '../components/ui'
 import { useUser } from '../lib/auth'
@@ -24,8 +24,11 @@ export default function Landing() {
               Calculates joint angles, counts repetitions, catches compensation patterns, and keeps all video strictly private on your device.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
+              <LinkButton to="/wellness" variant="primary">
+                <Sparkles className="h-4 w-4 text-white" aria-hidden /> Everyday Desk Wellness
+              </LinkButton>
               <LinkButton to={user ? '/dashboard' : '/exercises'}>
-                <Compass className="h-4 w-4" aria-hidden /> Browse Exercise Library
+                <Compass className="h-4 w-4" aria-hidden /> Exercise Library
               </LinkButton>
               <LinkButton to="/exercise" variant="onDark">
                 <Play className="h-4 w-4 fill-white" aria-hidden /> Try Camera Now

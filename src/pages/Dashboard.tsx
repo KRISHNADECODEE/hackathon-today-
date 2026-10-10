@@ -6,12 +6,17 @@ import {
   Play,
   Repeat,
   ShieldCheck,
+  Sparkles,
 } from 'lucide-react'
 import { Badge, Card, LinkButton, deg, mmss } from '../components/ui'
 import { useAuth, useUser } from '../lib/auth'
 import { exerciseById, EXERCISES } from '../lib/exercises'
 import { getPrefs } from '../lib/prefs'
 import { useSessions } from '../lib/useSessions'
+import { computeTodayStats, computeWeeklyStats } from '../lib/wellnessStats'
+import { useDeskReminders } from '../lib/useDeskReminders'
+import { useOfflineSync } from '../lib/pwa'
+import { queuedSessionToRow } from '../lib/offlineQueue'
 import { PatientConnectionsSection } from '../components/PatientConnectionsSection'
 import { ClinicalPlansSection } from '../components/ClinicalPlansSection'
 
@@ -67,6 +72,9 @@ export default function Dashboard() {
           <ClinicalPlansSection patientId={user.id} />
         </div>
       )}
+
+      {/* Everyday Wellness Daily Overview */}
+      <EverydayWellnessOverview user={user} />
 
       {/* Hero Action Cards: Quick Repeat & Category Shortcuts */}
       <div className="grid gap-6 md:grid-cols-[1.2fr_1fr]">
@@ -288,5 +296,97 @@ function UserProgressSnippet({ user }: { user: NonNullable<ReturnType<typeof use
         })}
       </Card>
     </div>
+  )
+}
+
+function EverydayWellnessOverview({ user }: { user: ReturnType<typeof useUser> }) {
+  const prefs = getPrefs()
+  const { state } = useSessions(user)
+  const { queuedItems } = useOfflineSync(user?.id)
+  const { nextReminder, prefs: reminderPrefs } = useDeskReminders()
+
+  const onlineSessions = state.kind === 'ok' ? state.data : []
+  const offlineRows = queuedItems.filter((q) => q.status !== 'synced').map(queuedSessionToRow)
+  const allSessions = [...onlineSessions, ...offlineRows]
+
+  const todayStats = computeTodayStats(allSessions, prefs.dailyGoals)
+  const weeklyStats = computeWeeklyStats(allSessions)
+
+  return (
+    <Card className="mb-8 border-emerald-500/30 bg-emerald-50/20 p-6 shadow-xs">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-rule/50 pb-4 mb-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 font-mono text-xs font-semibold uppercase tracking-wider text-emerald-700">
+              <Sparkles className="h-4 w-4 text-emerald-600" /> Everyday Desk Wellness
+            </span>
+            <Badge tone="neutral">Self-Directed</Badge>
+          </div>
+          <h2 className="mt-1 font-display text-lg font-bold text-ink">
+            Today&apos;s Movement & Desk Habits
+          </h2>
+        </div>
+
+        <div className="flex items-center gap-2 text-xs">
+          <LinkButton to="/wellness" variant="ghost" className="border border-rule">
+            Open Wellness Hub →
+          </LinkButton>
+          <LinkButton to="/exercise?id=sit_to_stand" className="bg-emerald-600 hover:bg-emerald-500 text-white">
+            <Play className="h-3.5 w-3.5 fill-white" /> 2-Min Break
+          </LinkButton>
+        </div>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-4 text-xs">
+        <div className="rounded-lg border border-rule bg-white p-3.5">
+          <span className="text-muted block text-[11px] uppercase font-mono">Today&apos;s Active Time</span>
+          <div className="mt-1 flex items-baseline gap-1.5">
+            <span className="font-mono text-2xl font-bold text-ink">{todayStats.activeMinutes}m</span>
+            <span className="text-muted font-mono">/ {prefs.dailyGoals.activeMinutes}m goal</span>
+          </div>
+          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-rule">
+            <div
+              className="h-full bg-emerald-500 transition-all duration-300"
+              style={{ width: `${todayStats.minutesGoalProgress}%` }}
+            />
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-rule bg-white p-3.5">
+          <span className="text-muted block text-[11px] uppercase font-mono">Breaks Completed</span>
+          <div className="mt-1 flex items-baseline gap-1.5">
+            <span className="font-mono text-2xl font-bold text-ink">{todayStats.completedSessions}</span>
+            <span className="text-muted font-mono">/ {prefs.dailyGoals.breakSessions} goal</span>
+          </div>
+          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-rule">
+            <div
+              className="h-full bg-emerald-500 transition-all duration-300"
+              style={{ width: `${todayStats.sessionsGoalProgress}%` }}
+            />
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-rule bg-white p-3.5">
+          <span className="text-muted block text-[11px] uppercase font-mono">Active Streak</span>
+          <div className="mt-1 flex items-baseline gap-1.5">
+            <span className="font-mono text-2xl font-bold text-ink">{weeklyStats.currentStreakDays}</span>
+            <span className="text-muted text-[11px]">consecutive {weeklyStats.currentStreakDays === 1 ? 'day' : 'days'}</span>
+          </div>
+          <p className="mt-1.5 text-[11px] text-muted">
+            {weeklyStats.currentStreakDays > 0 ? 'Consistent movement habit' : 'Start streak today'}
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-rule bg-white p-3.5">
+          <span className="text-muted block text-[11px] uppercase font-mono">Desk Reminder</span>
+          <div className="mt-1 font-semibold text-ink text-sm">
+            {nextReminder.label}
+          </div>
+          <p className="mt-1.5 text-[11px] text-muted">
+            {reminderPrefs.enabled ? `Interval: ${reminderPrefs.intervalMinutes}m` : 'Reminders disabled'}
+          </p>
+        </div>
+      </div>
+    </Card>
   )
 }
