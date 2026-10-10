@@ -169,8 +169,12 @@ function AppShell() {
 }
 
 export default function App() {
+  const basename = typeof window !== 'undefined' && window.location.pathname.startsWith('/hackathon-today-')
+    ? '/hackathon-today-'
+    : '/'
+
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={basename}>
       <AppShell />
     </BrowserRouter>
   )
