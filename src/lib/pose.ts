@@ -1,16 +1,21 @@
 import { FilesetResolver, PoseLandmarker } from '@mediapipe/tasks-vision'
 
-// Wasm is copied from node_modules on install; the model is the official
-// pose_landmarker_lite.task, served locally so the demo does not need a CDN.
-const WASM = '/mediapipe/wasm'
-const MODEL = '/mediapipe/pose_landmarker_lite.task'
+const BASE = typeof window !== 'undefined' && window.location.pathname.startsWith('/hackathon-today-')
+  ? '/hackathon-today-'
+  : ''
+
+const LOCAL_WASM = `${BASE}/mediapipe/wasm`
+const LOCAL_MODEL = `${BASE}/mediapipe/pose_landmarker_lite.task`
+
+const CDN_WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
+const CDN_MODEL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task'
 
 let instance: Promise<PoseLandmarker> | null = null
 
-async function create(): Promise<PoseLandmarker> {
-  const fileset = await FilesetResolver.forVisionTasks(WASM)
+async function loadLandmarker(wasmPath: string, modelPath: string): Promise<PoseLandmarker> {
+  const fileset = await FilesetResolver.forVisionTasks(wasmPath)
   const opts = (delegate: 'GPU' | 'CPU') => ({
-    baseOptions: { modelAssetPath: MODEL, delegate },
+    baseOptions: { modelAssetPath: modelPath, delegate },
     runningMode: 'VIDEO' as const,
     numPoses: 1,
   })
@@ -18,6 +23,17 @@ async function create(): Promise<PoseLandmarker> {
     return await PoseLandmarker.createFromOptions(fileset, opts('GPU'))
   } catch {
     return await PoseLandmarker.createFromOptions(fileset, opts('CPU'))
+  }
+}
+
+async function create(): Promise<PoseLandmarker> {
+  try {
+    // Attempt local model and wasm first (supports offline PWA)
+    return await loadLandmarker(LOCAL_WASM, LOCAL_MODEL)
+  } catch (localError) {
+    console.warn('Local MediaPipe asset loading failed, falling back to CDN:', localError)
+    // Fallback to official MediaPipe CDN
+    return await loadLandmarker(CDN_WASM, CDN_MODEL)
   }
 }
 
